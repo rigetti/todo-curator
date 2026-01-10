@@ -1,8 +1,8 @@
 use crate::todo::TodoReference;
 use anyhow::{Context, Result};
 use gitlab::api::projects::{issues, merge_requests};
-use gitlab::api::Query;
-use gitlab::Gitlab;
+use gitlab::api::AsyncQuery;
+use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
 use serde::Deserialize;
 use std::env;
@@ -28,13 +28,13 @@ pub struct ClosedReference {
 
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
-    gitlab_client: Option<Gitlab>,
+    gitlab_client: Option<AsyncGitlab>,
 }
 
 impl StatusChecker {
     pub async fn new() -> Result<Self> {
-        let github_client = Self::init_github_client().await?;
-        let gitlab_client = Self::init_gitlab_client()?;
+        let github_client = Self::init_github_client()?;
+        let gitlab_client = Self::init_gitlab_client().await?;
 
         Ok(Self {
             github_client,
@@ -42,7 +42,7 @@ impl StatusChecker {
         })
     }
 
-    async fn init_github_client() -> Result<Option<Octocrab>> {
+    fn init_github_client() -> Result<Option<Octocrab>> {
         if let Ok(token) = env::var("GITHUB_TOKEN") {
             let octocrab = Octocrab::builder()
                 .personal_token(token)
@@ -54,10 +54,12 @@ impl StatusChecker {
         }
     }
 
-    fn init_gitlab_client() -> Result<Option<Gitlab>> {
+    async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
         if let Ok(token) = env::var("GITLAB_TOKEN") {
             let gitlab_url = env::var("GITLAB_URL").unwrap_or_else(|_| "https://gitlab.com".to_string());
-            let client = Gitlab::new(&gitlab_url, token)
+            let client = gitlab::GitlabBuilder::new(&gitlab_url, token)
+                .build_async()
+                .await
                 .context("Failed to build GitLab client")?;
             Ok(Some(client))
         } else {
@@ -125,7 +127,7 @@ impl StatusChecker {
             .build()
             .context("Failed to build GitLab issue query")?;
 
-        let issue: GitLabIssue = match endpoint.query(client) {
+        let issue: GitLabIssue = match endpoint.query_async(client).await {
             Ok(issue) => issue,
             Err(_) => return Ok(None),
         };
@@ -183,7 +185,7 @@ impl StatusChecker {
             .build()
             .context("Failed to build GitLab MR query")?;
 
-        let mr: GitLabMergeRequest = match endpoint.query(client) {
+        let mr: GitLabMergeRequest = match endpoint.query_async(client).await {
             Ok(mr) => mr,
             Err(_) => return Ok(None),
         };
@@ -253,7 +255,7 @@ impl StatusChecker {
             .build()
             .context("Failed to build GitLab MR query")?;
 
-        let mrs: Vec<GitLabMergeRequest> = match endpoint.query(client) {
+        let mrs: Vec<GitLabMergeRequest> = match endpoint.query_async(client).await {
             Ok(mrs) => mrs,
             Err(_) => return Ok(Vec::new()),
         };
