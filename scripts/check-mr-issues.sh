@@ -31,4 +31,4 @@ if [[ -z "${GITLAB_PROJECT:-}" ]]; then
 fi
 
 # Run todo-curator with all arguments passed through
-exec todo-curator check-mr-todos "$@"
+exec ~/.cargo/bin/todo-curator check-mr-todos "$@"

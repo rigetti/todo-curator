@@ -56,30 +56,31 @@ impl StatusChecker {
 
     async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
         if let Ok(token) = env::var("GITLAB_TOKEN") {
-            let gitlab_url = env::var("GITLAB_URL").unwrap_or_else(|_| "https://gitlab.com".to_string());
-            let client = gitlab::GitlabBuilder::new(&gitlab_url, token)
+            let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "https://gitlab.com".to_string());
+            match gitlab::GitlabBuilder::new(&gitlab_host, token)
                 .build_async()
                 .await
-                .context("Failed to build GitLab client")?;
-            Ok(Some(client))
+            {
+                Ok(client) => Ok(Some(client)),
+                Err(e) => {
+                    eprintln!("Warning: Failed to initialize GitLab client: {}", e);
+                    eprintln!("GitLab TODO checking will be skipped.");
+                    Ok(None)
+                }
+            }
         } else {
             Ok(None)
         }
     }
 
     pub fn check_auth(&self) -> Result<()> {
-        if self.gitlab_client.is_none() {
+        if self.gitlab_client.is_none() && self.github_client.is_none() {
             anyhow::bail!(
-                "GitLab authentication not configured.\n\
-                Set GITLAB_TOKEN environment variable with your GitLab personal access token.\n\
-                Optionally set GITLAB_URL (defaults to https://gitlab.com)."
-            );
-        }
-
-        if self.github_client.is_none() {
-            anyhow::bail!(
-                "GitHub authentication not configured.\n\
-                Set GITHUB_TOKEN environment variable with your GitHub personal access token."
+                "No authentication configured.\n\
+                Set GITHUB_TOKEN and/or GITLAB_TOKEN environment variables with your personal access tokens.\n\
+                - GitHub: https://github.com/settings/tokens (requires 'repo' scope)\n\
+                - GitLab: https://gitlab.com/-/user_settings/personal_access_tokens (requires 'api' scope)\n\
+                Optionally set GITLAB_URL for self-hosted GitLab (defaults to gitlab.com)."
             );
         }
 
@@ -116,8 +117,9 @@ impl StatusChecker {
     }
 
     async fn check_gitlab_issue(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
-        let client = self.gitlab_client.as_ref()
-            .context("GitLab client not initialized")?;
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(None);
+        };
 
         let project_path = project.context("GitLab issue requires project path")?;
         
@@ -146,8 +148,9 @@ impl StatusChecker {
     }
 
     async fn check_github_issue(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
-        let client = self.github_client.as_ref()
-            .context("GitHub client not initialized")?;
+        let Some(client) = self.github_client.as_ref() else {
+            return Ok(None);
+        };
 
         let parts: Vec<&str> = repo.split('/').collect();
         if parts.len() != 2 {
@@ -174,8 +177,9 @@ impl StatusChecker {
     }
 
     async fn check_gitlab_mr(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
-        let client = self.gitlab_client.as_ref()
-            .context("GitLab client not initialized")?;
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(None);
+        };
 
         let project_path = project.context("GitLab MR requires project path")?;
         
@@ -204,8 +208,9 @@ impl StatusChecker {
     }
 
     async fn check_github_pr(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
-        let client = self.github_client.as_ref()
-            .context("GitHub client not initialized")?;
+        let Some(client) = self.github_client.as_ref() else {
+            return Ok(None);
+        };
 
         let parts: Vec<&str> = repo.split('/').collect();
         if parts.len() != 2 {
@@ -232,8 +237,9 @@ impl StatusChecker {
     }
 
     pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
-        let client = self.gitlab_client.as_ref()
-            .context("GitLab client not initialized")?;
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(Vec::new());
+        };
 
         // Get current branch name to find the MR
         let output = std::process::Command::new("git")
