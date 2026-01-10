@@ -27,20 +27,24 @@ enum Commands {
     CheckMrTodos {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+        
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::CheckClosed { path } => check_closed_references(path),
-        Commands::CheckMrTodos { path } => check_mr_todos(path),
+        Commands::CheckClosed { path } => check_closed_references(path).await,
+        Commands::CheckMrTodos { path, project } => check_mr_todos(path, project).await,
     }
 }
 
-fn check_closed_references(path: PathBuf) -> Result<()> {
-    let checker = checker::StatusChecker::new();
+async fn check_closed_references(path: PathBuf) -> Result<()> {
+    let checker = checker::StatusChecker::new().await?;
     
     checker.check_auth()?;
 
@@ -53,7 +57,7 @@ fn check_closed_references(path: PathBuf) -> Result<()> {
     }
 
     let references_vec: Vec<_> = references.into_iter().collect();
-    let closed = checker.check_references(&references_vec)?;
+    let closed = checker.check_references(&references_vec).await?;
 
     if !closed.is_empty() {
         eprintln!("{}", "TODO comments referencing closed issues/MRs:".red().bold());
@@ -67,12 +71,21 @@ fn check_closed_references(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn check_mr_todos(path: PathBuf) -> Result<()> {
-    let checker = checker::StatusChecker::new();
+async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
+    let checker = checker::StatusChecker::new().await?;
     
     checker.check_auth()?;
 
-    let issues = checker.get_current_mr_issues()?;
+    let project = project
+        .or_else(|| std::env::var("GITLAB_PROJECT").ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "GitLab project path required. Set --project flag or GITLAB_PROJECT environment variable.\n\
+                Example: --project group/subgroup/repo"
+            )
+        })?;
+
+    let issues = checker.get_current_mr_issues(&project).await?;
     
     if issues.is_empty() {
         println!("Not on an MR or no issues will be closed by current MR");

@@ -1,7 +1,24 @@
 use crate::todo::TodoReference;
 use anyhow::{Context, Result};
+use gitlab::api::projects::{issues, merge_requests};
+use gitlab::api::Query;
+use gitlab::Gitlab;
+use octocrab::Octocrab;
 use serde::Deserialize;
-use std::process::Command;
+use std::env;
+
+#[derive(Debug, Deserialize)]
+struct GitLabIssue {
+    title: String,
+    state: gitlab::webhooks::IssueState,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitLabMergeRequest {
+    title: String,
+    state: gitlab::webhooks::MergeRequestState,
+    description: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct ClosedReference {
@@ -9,48 +26,69 @@ pub struct ClosedReference {
     pub title: String,
 }
 
-pub struct StatusChecker;
+pub struct StatusChecker {
+    github_client: Option<Octocrab>,
+    gitlab_client: Option<Gitlab>,
+}
 
 impl StatusChecker {
-    pub fn new() -> Self {
-        Self
+    pub async fn new() -> Result<Self> {
+        let github_client = Self::init_github_client().await?;
+        let gitlab_client = Self::init_gitlab_client()?;
+
+        Ok(Self {
+            github_client,
+            gitlab_client,
+        })
+    }
+
+    async fn init_github_client() -> Result<Option<Octocrab>> {
+        if let Ok(token) = env::var("GITHUB_TOKEN") {
+            let octocrab = Octocrab::builder()
+                .personal_token(token)
+                .build()
+                .context("Failed to build GitHub client")?;
+            Ok(Some(octocrab))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn init_gitlab_client() -> Result<Option<Gitlab>> {
+        if let Ok(token) = env::var("GITLAB_TOKEN") {
+            let gitlab_url = env::var("GITLAB_URL").unwrap_or_else(|_| "https://gitlab.com".to_string());
+            let client = Gitlab::new(&gitlab_url, token)
+                .context("Failed to build GitLab client")?;
+            Ok(Some(client))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn check_auth(&self) -> Result<()> {
-        let glab_status = Command::new("glab")
-            .arg("auth")
-            .arg("status")
-            .output()
-            .context("Failed to run 'glab auth status'")?;
-
-        if !glab_status.status.success() {
+        if self.gitlab_client.is_none() {
             anyhow::bail!(
-                "'glab' is either not working or not authorized.\n\
-                See https://docs.gitlab.com/editor_extensions/gitlab_cli/#authenticate-with-gitlab"
+                "GitLab authentication not configured.\n\
+                Set GITLAB_TOKEN environment variable with your GitLab personal access token.\n\
+                Optionally set GITLAB_URL (defaults to https://gitlab.com)."
             );
         }
 
-        let gh_status = Command::new("gh")
-            .arg("auth")
-            .arg("status")
-            .output()
-            .context("Failed to run 'gh auth status'")?;
-
-        if !gh_status.status.success() {
+        if self.github_client.is_none() {
             anyhow::bail!(
-                "'gh' is either not working or not authorized.\n\
-                See https://cli.github.com/manual/gh_auth_login"
+                "GitHub authentication not configured.\n\
+                Set GITHUB_TOKEN environment variable with your GitHub personal access token."
             );
         }
 
         Ok(())
     }
 
-    pub fn check_references(&self, references: &[TodoReference]) -> Result<Vec<ClosedReference>> {
+    pub async fn check_references(&self, references: &[TodoReference]) -> Result<Vec<ClosedReference>> {
         let mut closed = Vec::new();
 
         for reference in references {
-            if let Some(closed_ref) = self.check_single_reference(reference)? {
+            if let Some(closed_ref) = self.check_single_reference(reference).await? {
                 closed.push(closed_ref);
             }
         }
@@ -58,88 +96,69 @@ impl StatusChecker {
         Ok(closed)
     }
 
-    fn check_single_reference(&self, reference: &TodoReference) -> Result<Option<ClosedReference>> {
+    async fn check_single_reference(&self, reference: &TodoReference) -> Result<Option<ClosedReference>> {
         match reference {
             TodoReference::GitLabIssue { project, number } => {
-                self.check_gitlab_issue(project.as_deref(), *number)
+                self.check_gitlab_issue(project.as_deref(), *number).await
             }
             TodoReference::GitHubIssue { repo, number } => {
-                self.check_github_issue(repo, *number)
+                self.check_github_issue(repo, *number).await
             }
             TodoReference::GitLabMr { project, number } => {
-                self.check_gitlab_mr(project.as_deref(), *number)
+                self.check_gitlab_mr(project.as_deref(), *number).await
             }
             TodoReference::GitHubPr { repo, number } => {
-                self.check_github_pr(repo, *number)
+                self.check_github_pr(repo, *number).await
             }
         }
     }
 
-    fn check_gitlab_issue(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
-        let mut cmd = Command::new("glab");
-        cmd.arg("issue");
-        
-        if project.is_some() {
-            cmd.arg("view");
-        } else {
-            cmd.arg("show");
-        }
-        
-        if let Some(proj) = project {
-            cmd.arg(format!("{}#{}", proj, number));
-            cmd.arg("--repo").arg(proj);
-        } else {
-            cmd.arg(number.to_string());
-        }
+    async fn check_gitlab_issue(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+        let client = self.gitlab_client.as_ref()
+            .context("GitLab client not initialized")?;
 
-        let output = cmd.output().context("Failed to run glab issue command")?;
-
-        if !output.status.success() {
-            return Ok(None);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let project_path = project.context("GitLab issue requires project path")?;
         
-        if stdout.contains("state: closed") || stdout.contains("state:\tclosed") {
-            let title = extract_title_from_glab(&stdout);
+        let endpoint = issues::Issue::builder()
+            .project(project_path)
+            .issue(number as u64)
+            .build()
+            .context("Failed to build GitLab issue query")?;
+
+        let issue: GitLabIssue = match endpoint.query(client) {
+            Ok(issue) => issue,
+            Err(_) => return Ok(None),
+        };
+
+        if issue.state == gitlab::webhooks::IssueState::Closed {
             Ok(Some(ClosedReference {
                 reference: TodoReference::GitLabIssue {
-                    project: project.map(String::from),
+                    project: Some(project_path.to_string()),
                     number,
                 },
-                title,
+                title: issue.title,
             }))
         } else {
             Ok(None)
         }
     }
 
-    fn check_github_issue(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
-        let issue_ref = format!("{}#{}", repo, number);
-        
-        let output = Command::new("gh")
-            .arg("issue")
-            .arg("view")
-            .arg(&issue_ref)
-            .arg("--json")
-            .arg("state,title")
-            .output()
-            .context("Failed to run gh issue view")?;
+    async fn check_github_issue(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+        let client = self.github_client.as_ref()
+            .context("GitHub client not initialized")?;
 
-        if !output.status.success() {
-            return Ok(None);
+        let parts: Vec<&str> = repo.split('/').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("Invalid GitHub repo format: {}", repo);
         }
+        let (owner, repo_name) = (parts[0], parts[1]);
 
-        #[derive(Deserialize)]
-        struct GhIssue {
-            state: String,
-            title: String,
-        }
+        let issue = match client.issues(owner, repo_name).get(number as u64).await {
+            Ok(issue) => issue,
+            Err(_) => return Ok(None),
+        };
 
-        let issue: GhIssue = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse gh issue output")?;
-
-        if issue.state == "CLOSED" {
+        if issue.state == octocrab::models::IssueState::Closed {
             Ok(Some(ClosedReference {
                 reference: TodoReference::GitHubIssue {
                     repo: repo.to_string(),
@@ -152,118 +171,109 @@ impl StatusChecker {
         }
     }
 
-    fn check_gitlab_mr(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
-        let mut cmd = Command::new("glab");
-        cmd.arg("mr");
-        
-        if project.is_some() {
-            cmd.arg("view");
-        } else {
-            cmd.arg("show");
-        }
-        
-        if let Some(proj) = project {
-            cmd.arg(number.to_string());
-            cmd.arg("--repo").arg(proj);
-        } else {
-            cmd.arg(number.to_string());
-        }
+    async fn check_gitlab_mr(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+        let client = self.gitlab_client.as_ref()
+            .context("GitLab client not initialized")?;
 
-        let output = cmd.output().context("Failed to run glab mr command")?;
-
-        if !output.status.success() {
-            return Ok(None);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let project_path = project.context("GitLab MR requires project path")?;
         
-        let is_open = stdout.contains("state: open") || stdout.contains("state:\topen");
-        
-        if !is_open {
-            let title = extract_title_from_glab(&stdout);
+        let endpoint = merge_requests::MergeRequest::builder()
+            .project(project_path)
+            .merge_request(number as u64)
+            .build()
+            .context("Failed to build GitLab MR query")?;
+
+        let mr: GitLabMergeRequest = match endpoint.query(client) {
+            Ok(mr) => mr,
+            Err(_) => return Ok(None),
+        };
+
+        if mr.state != gitlab::webhooks::MergeRequestState::Opened {
             Ok(Some(ClosedReference {
                 reference: TodoReference::GitLabMr {
-                    project: project.map(String::from),
+                    project: Some(project_path.to_string()),
                     number,
                 },
-                title,
+                title: mr.title,
             }))
         } else {
             Ok(None)
         }
     }
 
-    fn check_github_pr(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
-        let pr_ref = format!("{}#{}", repo, number);
-        
-        let output = Command::new("gh")
-            .arg("pr")
-            .arg("view")
-            .arg(&pr_ref)
-            .arg("--json")
-            .arg("state,title")
-            .output()
-            .context("Failed to run gh pr view")?;
+    async fn check_github_pr(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+        let client = self.github_client.as_ref()
+            .context("GitHub client not initialized")?;
 
-        if !output.status.success() {
-            return Ok(None);
+        let parts: Vec<&str> = repo.split('/').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("Invalid GitHub repo format: {}", repo);
         }
+        let (owner, repo_name) = (parts[0], parts[1]);
 
-        #[derive(Deserialize)]
-        struct GhPr {
-            state: String,
-            title: String,
-        }
+        let pr = match client.pulls(owner, repo_name).get(number as u64).await {
+            Ok(pr) => pr,
+            Err(_) => return Ok(None),
+        };
 
-        let pr: GhPr = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse gh pr output")?;
-
-        if pr.state != "OPEN" {
+        if pr.state != Some(octocrab::models::IssueState::Open) {
             Ok(Some(ClosedReference {
                 reference: TodoReference::GitHubPr {
                     repo: repo.to_string(),
                     number,
                 },
-                title: pr.title,
+                title: pr.title.unwrap_or_else(|| "(no title)".to_string()),
             }))
         } else {
             Ok(None)
         }
     }
 
-    pub fn get_current_mr_issues(&self) -> Result<Vec<u32>> {
-        let output = Command::new("glab")
-            .arg("mr")
-            .arg("issues")
+    pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
+        let client = self.gitlab_client.as_ref()
+            .context("GitLab client not initialized")?;
+
+        // Get current branch name to find the MR
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .output()
-            .context("Failed to run 'glab mr issues'")?;
+            .context("Failed to get current git branch")?;
 
         if !output.status.success() {
             return Ok(Vec::new());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let issue_regex = regex::Regex::new(r"^#(\d+)").unwrap();
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
         
-        let issues: Vec<u32> = stdout
-            .lines()
-            .filter_map(|line| {
-                issue_regex.captures(line)
-                    .and_then(|caps| caps.get(1))
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-            })
+        // Find MR for this branch
+        let endpoint = merge_requests::MergeRequests::builder()
+            .project(project)
+            .source_branch(&branch)
+            .state(merge_requests::MergeRequestState::Opened)
+            .build()
+            .context("Failed to build GitLab MR query")?;
+
+        let mrs: Vec<GitLabMergeRequest> = match endpoint.query(client) {
+            Ok(mrs) => mrs,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        if mrs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Get the first MR and extract issue numbers from description
+        let mr = &mrs[0];
+        let description = mr.description.as_deref().unwrap_or("");
+        
+        // Parse "Closes #123" or "Fixes #456" patterns
+        let issue_regex = regex::Regex::new(r"(?i)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)").unwrap();
+        let issues: Vec<u32> = issue_regex
+            .captures_iter(description)
+            .filter_map(|caps| caps.get(1))
+            .filter_map(|m| m.as_str().parse::<u32>().ok())
             .collect();
 
         Ok(issues)
     }
-}
-
-fn extract_title_from_glab(output: &str) -> String {
-    let title_regex = regex::Regex::new(r"title:\s+(.+)").unwrap();
-    
-    title_regex
-        .captures(output)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_else(|| String::from("(no title)"))
 }
