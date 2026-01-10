@@ -26,6 +26,17 @@ pub struct ClosedReference {
     pub title: String,
 }
 
+#[derive(Debug)]
+pub struct NotFoundReference {
+    pub reference: TodoReference,
+    pub error: String,
+}
+
+pub struct CheckResult {
+    pub closed: Vec<ClosedReference>,
+    pub not_found: Vec<NotFoundReference>,
+}
+
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
     gitlab_client: Option<AsyncGitlab>,
@@ -87,36 +98,44 @@ impl StatusChecker {
         Ok(())
     }
 
-    pub async fn check_references(&self, references: &[TodoReference]) -> Result<Vec<ClosedReference>> {
+    pub async fn check_references(&self, references: &[TodoReference]) -> Result<CheckResult> {
         let mut closed = Vec::new();
+        let mut not_found = Vec::new();
 
         for reference in references {
-            if let Some(closed_ref) = self.check_single_reference(reference).await? {
-                closed.push(closed_ref);
+            match self.check_single_reference(reference).await {
+                Ok(Some(closed_ref)) => closed.push(closed_ref),
+                Ok(None) => {}, // Reference exists but is not closed
+                Err(e) => {
+                    not_found.push(NotFoundReference {
+                        reference: reference.clone(),
+                        error: e.to_string(),
+                    });
+                }
             }
         }
 
-        Ok(closed)
+        Ok(CheckResult { closed, not_found })
     }
 
     async fn check_single_reference(&self, reference: &TodoReference) -> Result<Option<ClosedReference>> {
         match reference {
-            TodoReference::GitLabIssue { project, number } => {
-                self.check_gitlab_issue(project.as_deref(), *number).await
+            TodoReference::GitLabIssue { project, number, .. } => {
+                self.check_gitlab_issue(reference, project.as_deref(), *number).await
             }
-            TodoReference::GitHubIssue { repo, number } => {
-                self.check_github_issue(repo, *number).await
+            TodoReference::GitHubIssue { repo, number, .. } => {
+                self.check_github_issue(reference, repo, *number).await
             }
-            TodoReference::GitLabMr { project, number } => {
-                self.check_gitlab_mr(project.as_deref(), *number).await
+            TodoReference::GitLabMr { project, number, .. } => {
+                self.check_gitlab_mr(reference, project.as_deref(), *number).await
             }
-            TodoReference::GitHubPr { repo, number } => {
-                self.check_github_pr(repo, *number).await
+            TodoReference::GitHubPr { repo, number, .. } => {
+                self.check_github_pr(reference, repo, *number).await
             }
         }
     }
 
-    async fn check_gitlab_issue(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_gitlab_issue(&self, reference: &TodoReference, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
         let Some(client) = self.gitlab_client.as_ref() else {
             return Ok(None);
         };
@@ -131,15 +150,14 @@ impl StatusChecker {
 
         let issue: GitLabIssue = match endpoint.query_async(client).await {
             Ok(issue) => issue,
-            Err(_) => return Ok(None),
+            Err(e) => {
+                anyhow::bail!("GitLab issue not found or inaccessible: {}", e);
+            }
         };
 
         if issue.state == gitlab::webhooks::IssueState::Closed {
             Ok(Some(ClosedReference {
-                reference: TodoReference::GitLabIssue {
-                    project: Some(project_path.to_string()),
-                    number,
-                },
+                reference: reference.clone(), // Preserves file_path and line_number from original
                 title: issue.title,
             }))
         } else {
@@ -147,7 +165,7 @@ impl StatusChecker {
         }
     }
 
-    async fn check_github_issue(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_github_issue(&self, reference: &TodoReference, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
@@ -160,15 +178,14 @@ impl StatusChecker {
 
         let issue = match client.issues(owner, repo_name).get(number as u64).await {
             Ok(issue) => issue,
-            Err(_) => return Ok(None),
+            Err(e) => {
+                anyhow::bail!("GitHub issue not found or inaccessible: {}", e);
+            }
         };
 
         if issue.state == octocrab::models::IssueState::Closed {
             Ok(Some(ClosedReference {
-                reference: TodoReference::GitHubIssue {
-                    repo: repo.to_string(),
-                    number,
-                },
+                reference: reference.clone(),
                 title: issue.title,
             }))
         } else {
@@ -176,7 +193,7 @@ impl StatusChecker {
         }
     }
 
-    async fn check_gitlab_mr(&self, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_gitlab_mr(&self, reference: &TodoReference, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
         let Some(client) = self.gitlab_client.as_ref() else {
             return Ok(None);
         };
@@ -196,10 +213,7 @@ impl StatusChecker {
 
         if mr.state != gitlab::webhooks::MergeRequestState::Opened {
             Ok(Some(ClosedReference {
-                reference: TodoReference::GitLabMr {
-                    project: Some(project_path.to_string()),
-                    number,
-                },
+                reference: reference.clone(),
                 title: mr.title,
             }))
         } else {
@@ -207,7 +221,7 @@ impl StatusChecker {
         }
     }
 
-    async fn check_github_pr(&self, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_github_pr(&self, reference: &TodoReference, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
@@ -225,10 +239,7 @@ impl StatusChecker {
 
         if pr.state != Some(octocrab::models::IssueState::Open) {
             Ok(Some(ClosedReference {
-                reference: TodoReference::GitHubPr {
-                    repo: repo.to_string(),
-                    number,
-                },
+                reference: reference.clone(),
                 title: pr.title.unwrap_or_else(|| "(no title)".to_string()),
             }))
         } else {

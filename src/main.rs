@@ -35,6 +35,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
     match cli.command {
@@ -57,13 +58,37 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     }
 
     let references_vec: Vec<_> = references.into_iter().collect();
-    let closed = checker.check_references(&references_vec).await?;
+    let result = checker.check_references(&references_vec).await?;
 
-    if !closed.is_empty() {
+    let mut has_errors = false;
+
+    if !result.closed.is_empty() {
         eprintln!("{}", "TODO comments referencing closed issues/MRs:".red().bold());
-        for closed_ref in &closed {
+        for closed_ref in &result.closed {
             eprintln!("{}: {}", closed_ref.reference.display().red(), closed_ref.title);
+            eprintln!("  {}:{}", closed_ref.reference.file_path().dimmed(), closed_ref.reference.line_number().to_string().dimmed());
+            let source = closed_ref.reference.source_line();
+            if !source.is_empty() {
+                eprintln!("  {}", source.dimmed());
+            }
         }
+        has_errors = true;
+    }
+
+    if !result.not_found.is_empty() {
+        eprintln!("\n{}", "TODO comments referencing non-existent or inaccessible issues/MRs:".yellow().bold());
+        for not_found_ref in &result.not_found {
+            eprintln!("{}: {}", not_found_ref.reference.display().yellow(), not_found_ref.error);
+            eprintln!("  {}:{}", not_found_ref.reference.file_path().dimmed(), not_found_ref.reference.line_number().to_string().dimmed());
+            let source = not_found_ref.reference.source_line();
+            if !source.is_empty() {
+                eprintln!("  {}", source.dimmed());
+            }
+        }
+        has_errors = true;
+    }
+
+    if has_errors {
         process::exit(1);
     }
 
@@ -101,7 +126,7 @@ async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
         let matching_refs: Vec<_> = all_references
             .iter()
             .filter(|r| match r {
-                todo::TodoReference::GitLabIssue { project: None, number } => *number == issue_num,
+                todo::TodoReference::GitLabIssue { project: None, number, .. } => *number == issue_num,
                 _ => false,
             })
             .collect();

@@ -25,4 +25,4 @@ if [[ -z "${GITLAB_TOKEN:-}" ]]; then
 fi
 
 # Run todo-curator with all arguments passed through
-exec ~/.cargo/bin/todo-curator check-closed "$@"
+exec todo-curator check-closed "$@"
