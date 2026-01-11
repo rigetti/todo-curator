@@ -109,9 +109,37 @@ impl TodoExtractor {
                     })
                 }),
             ),
-            // GitLab issues in rendered format: group/subgroup/repo#123
+            // GitHub issues with full URLs: https://github.com/owner/repo/issues/123
             (
-                Regex::new(r"TODO:?.*\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
+                Regex::new(r"TODO:? https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    let repo = caps.get(1)?.as_str().to_string();
+                    let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                    Some(TodoReference::GitHubIssue { repo, number, source_line: line.trim().to_string(), file_path: file_path.to_string(), line_number })
+                }),
+            ),
+            // GitHub issues without schema: github.com/owner/repo/issues/123
+            (
+                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    let repo = caps.get(1)?.as_str().to_string();
+                    let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                    Some(TodoReference::GitHubIssue { repo, number, source_line: line.trim().to_string(), file_path: file_path.to_string(), line_number })
+                }),
+            ),
+            // GitHub issues in shorthand format: github.com/owner/repo#123
+            (
+                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)#(\d+)").unwrap(),
+                Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    let repo = caps.get(1)?.as_str().to_string();
+                    let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                    Some(TodoReference::GitHubIssue { repo, number, source_line: line.trim().to_string(), file_path: file_path.to_string(), line_number })
+                }),
+            ),
+            // GitLab issues in rendered format: group/subgroup/repo#123
+            // NOTE: This must come AFTER GitHub patterns to avoid misclassifying github.com URLs
+            (
+                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let project = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
@@ -122,24 +150,6 @@ impl TodoExtractor {
                         file_path: file_path.to_string(),
                         line_number,
                     })
-                }),
-            ),
-            // GitHub issues with full URLs: https://github.com/owner/repo/issues/123
-            (
-                Regex::new(r"TODO:?.*https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
-                Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                    let repo = caps.get(1)?.as_str().to_string();
-                    let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                    Some(TodoReference::GitHubIssue { repo, number, source_line: line.trim().to_string(), file_path: file_path.to_string(), line_number })
-                }),
-            ),
-            // GitHub issues without schema: github.com/owner/repo/issues/123
-            (
-                Regex::new(r"TODO:?.*github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
-                Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                    let repo = caps.get(1)?.as_str().to_string();
-                    let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                    Some(TodoReference::GitHubIssue { repo, number, source_line: line.trim().to_string(), file_path: file_path.to_string(), line_number })
                 }),
             ),
             // Local GitLab MRs: TODO !123
@@ -159,7 +169,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs with full URLs: https://gitlab.com/group/.../repo/-/merge_requests/123
             (
-                Regex::new(r"TODO:?.*https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)").unwrap(),
+                Regex::new(r"TODO:? https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let project = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
@@ -174,7 +184,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs without schema: gitlab.com/group/.../repo/-/merge_requests/123
             (
-                Regex::new(r"TODO:?.*gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)").unwrap(),
+                Regex::new(r"TODO:? gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let project = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
@@ -189,7 +199,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs in rendered format: group/subgroup/repo!123
             (
-                Regex::new(r"TODO:?.*\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
+                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let project = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
@@ -204,7 +214,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs with full URLs: https://github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO:?.*https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"TODO:? https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let repo = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
@@ -213,7 +223,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs without schema: github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO:?.*github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
                 Box::new(|caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                     let repo = caps.get(1)?.as_str().to_string();
                     let number = caps.get(2)?.as_str().parse::<u32>().ok()?;

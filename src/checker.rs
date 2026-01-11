@@ -54,7 +54,7 @@ impl StatusChecker {
     }
 
     fn init_github_client() -> Result<Option<Octocrab>> {
-        if let Ok(token) = env::var("GITHUB_TOKEN") {
+        if let Ok(token) = env::var("GH_TOKEN") {
             let octocrab = Octocrab::builder()
                 .personal_token(token)
                 .build()
@@ -88,7 +88,7 @@ impl StatusChecker {
         if self.gitlab_client.is_none() && self.github_client.is_none() {
             anyhow::bail!(
                 "No authentication configured.\n\
-                Set GITHUB_TOKEN and/or GITLAB_TOKEN environment variables with your personal access tokens.\n\
+                Set GH_TOKEN and/or GITLAB_TOKEN environment variables with your personal access tokens.\n\
                 - GitHub: https://github.com/settings/tokens (requires 'repo' scope)\n\
                 - GitLab: https://gitlab.com/-/user_settings/personal_access_tokens (requires 'api' scope)\n\
                 Optionally set GITLAB_URL for self-hosted GitLab (defaults to gitlab.com)."

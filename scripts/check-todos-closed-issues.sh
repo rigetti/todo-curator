@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-# Check and set GITHUB_TOKEN if not already set
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+# Check and set GH_TOKEN if not already set
+if [[ -z "${GH_TOKEN:-}" ]]; then
     if gh auth status &>/dev/null; then
-        export GITHUB_TOKEN=$(gh auth token)
+        export GH_TOKEN=$(gh auth token)
     else
         echo "'gh' is either not working or not authorized." >&2
         echo "See https://cli.github.com/manual/gh_auth_login" >&2

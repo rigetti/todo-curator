@@ -30,7 +30,7 @@ You need API tokens for GitHub and GitLab:
 Create a personal access token at https://github.com/settings/tokens with `repo` scope, then set:
 
 ```bash
-export GITHUB_TOKEN="your_github_token_here"
+export GH_TOKEN="your_github_token_here"
 ```
 
 ### GitLab Authentication
@@ -55,7 +55,7 @@ This command scans the specified directory (default: current directory) for TODO
 
 **Example:**
 ```bash
-export GITHUB_TOKEN="ghp_..."
+export GH_TOKEN="ghp_..."
 export GITLAB_TOKEN="glpat-..."
 
 cd ~/workspace/my-project
@@ -119,7 +119,7 @@ Add to your GitLab CI pipeline:
 check-todos:
   stage: test
   variables:
-    GITHUB_TOKEN: $GITHUB_TOKEN  # Set in CI/CD variables
+    GH_TOKEN: $GH_TOKEN  # Set in CI/CD variables
     GITLAB_TOKEN: $GITLAB_TOKEN  # Set in CI/CD variables
   script:
     - todo-curator check-closed
@@ -137,7 +137,7 @@ check-mr-todos:
   allow_failure: false
 ```
 
-**Note**: Store `GITHUB_TOKEN` and `GITLAB_TOKEN` as masked CI/CD variables in your GitLab project settings.
+**Note**: Store `GH_TOKEN` and `GITLAB_TOKEN` as masked CI/CD variables in your GitLab project settings.
 
 ## Development
 
@@ -175,7 +175,7 @@ The Rust implementation provides:
 2. **Set up API tokens**: Replace CLI authentication with environment variables
    ```bash
    # Instead of: gh auth login
-   export GITHUB_TOKEN="ghp_..."
+   export GH_TOKEN="ghp_..."
    
    # Instead of: glab auth login
    export GITLAB_TOKEN="glpat-..."
