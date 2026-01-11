@@ -2,10 +2,16 @@ mod checker;
 mod todo;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use std::path::PathBuf;
 use std::process;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
 
 #[derive(Parser)]
 #[command(name = "todo-curator")]
@@ -21,6 +27,9 @@ enum Commands {
     CheckClosed {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+
+        #[arg(long, value_enum, default_value = "text", help = "Output format")]
+        format: OutputFormat,
     },
 
     #[command(about = "Check for TODO comments that should be removed when current MR closes")]
@@ -30,6 +39,9 @@ enum Commands {
 
         #[arg(long)]
         project: Option<String>,
+
+        #[arg(long, value_enum, default_value = "text", help = "Output format")]
+        format: OutputFormat,
     },
 }
 
@@ -39,12 +51,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::CheckClosed { path } => check_closed_references(path).await,
-        Commands::CheckMrTodos { path, project } => check_mr_todos(path, project).await,
+        Commands::CheckClosed { path, format } => check_closed_references(path, format).await,
+        Commands::CheckMrTodos { path, project, format } => check_mr_todos(path, project, format).await,
     }
 }
 
-async fn check_closed_references(path: PathBuf) -> Result<()> {
+async fn check_closed_references(path: PathBuf, format: OutputFormat) -> Result<()> {
     // Detect GitLab project from git origin for local TODO references
     let gitlab_project = checker::StatusChecker::detect_gitlab_project(&path);
     tracing::debug!("GitLab project: {gitlab_project:?}");
@@ -56,7 +68,14 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     let references = extractor.extract_from_directory(&path)?;
 
     if references.is_empty() {
-        println!("No TODO references found.");
+        match format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::json!({"closed": [], "not_found": [], "status": "success"}));
+            }
+            OutputFormat::Text => {
+                println!("No TODO references found.");
+            }
+        }
         return Ok(());
     }
 
@@ -65,65 +84,88 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
 
     let mut has_errors = false;
 
-    if !result.closed.is_empty() {
-        eprintln!(
-            "{}",
-            "TODO comments referencing closed issues/MRs:".red().bold()
-        );
-        for closed_ref in &result.closed {
-            eprintln!(
-                "{}: {}",
-                closed_ref.reference.display().yellow(),
-                closed_ref.title
-            );
-            eprintln!(
-                "  {}:{}",
-                closed_ref.reference.file_path().bold(),
-                closed_ref.reference.line_number().to_string().bold()
-            );
-            let source = closed_ref.reference.source_line();
-            if !source.is_empty() {
-                eprintln!("  {}", source.dimmed());
+    match format {
+        OutputFormat::Json => {
+            // JSON output
+            let status = if result.closed.is_empty() && result.not_found.is_empty() {
+                "success"
+            } else {
+                "failure"
+            };
+            let output = serde_json::json!({
+                "closed": result.closed,
+                "not_found": result.not_found,
+                "status": status
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            
+            if !result.closed.is_empty() || !result.not_found.is_empty() {
+                process::exit(1);
             }
         }
-        has_errors = true;
-    }
-
-    if !result.not_found.is_empty() {
-        eprintln!(
-            "\n{}",
-            "TODO comments referencing non-existent or inaccessible issues/MRs:"
-                .red()
-                .bold()
-        );
-        for not_found_ref in &result.not_found {
+        OutputFormat::Text => {
+        // Human-readable output
+        if !result.closed.is_empty() {
             eprintln!(
-                "{}: {}",
-                not_found_ref.reference.display().yellow(),
-                not_found_ref.error
+                "{}",
+                "TODO comments referencing closed issues/MRs:".red().bold()
             );
-            eprintln!(
-                "  {}:{}",
-                not_found_ref.reference.file_path().bold(),
-                not_found_ref.reference.line_number().to_string().bold()
-            );
-            let source = not_found_ref.reference.source_line();
-            if !source.is_empty() {
-                eprintln!("  {}", source.dimmed());
+            for closed_ref in &result.closed {
+                eprintln!(
+                    "{}: {}",
+                    closed_ref.reference.display().yellow(),
+                    closed_ref.title
+                );
+                eprintln!(
+                    "  {}:{}",
+                    closed_ref.reference.file_path().bold(),
+                    closed_ref.reference.line_number().to_string().bold()
+                );
+                let source = closed_ref.reference.source_line();
+                if !source.is_empty() {
+                    eprintln!("  {}", source.dimmed());
+                }
             }
+            has_errors = true;
         }
-        has_errors = true;
-    }
 
-    if has_errors {
-        process::exit(1);
-    }
+        if !result.not_found.is_empty() {
+            eprintln!(
+                "\n{}",
+                "TODO comments referencing non-existent or inaccessible issues/MRs:"
+                    .red()
+                    .bold()
+            );
+            for not_found_ref in &result.not_found {
+                eprintln!(
+                    "{}: {}",
+                    not_found_ref.reference.display().yellow(),
+                    not_found_ref.error
+                );
+                eprintln!(
+                    "  {}:{}",
+                    not_found_ref.reference.file_path().bold(),
+                    not_found_ref.reference.line_number().to_string().bold()
+                );
+                let source = not_found_ref.reference.source_line();
+                if !source.is_empty() {
+                    eprintln!("  {}", source.dimmed());
+                }
+            }
+            has_errors = true;
+        }
 
-    println!("{}", "All TODO references are valid.".green());
+        if has_errors {
+            process::exit(1);
+        }
+
+            println!("{}", "All TODO references are valid.".green());
+        }
+    }
     Ok(())
 }
 
-async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
+async fn check_mr_todos(path: PathBuf, project: Option<String>, _format: OutputFormat) -> Result<()> {
     let checker = checker::StatusChecker::new().await?;
 
     checker.check_auth()?;

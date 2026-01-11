@@ -3,11 +3,12 @@ use grep_searcher::sinks::UTF8;
 use grep_searcher::Searcher;
 use ignore::WalkBuilder;
 use regex::Regex;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[expect(clippy::enum_variant_names, reason = "GitHub and GitLab are distinct")]
 pub enum TodoReference {
     GitLabIssue {

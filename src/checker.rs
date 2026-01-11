@@ -4,7 +4,7 @@ use gitlab::api::projects::{issues, merge_requests};
 use gitlab::api::AsyncQuery;
 use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 
 #[derive(Debug, Deserialize)]
@@ -20,13 +20,13 @@ struct GitLabMergeRequest {
     description: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ClosedReference {
     pub reference: TodoReference,
     pub title: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct NotFoundReference {
     pub reference: TodoReference,
     pub error: String,
