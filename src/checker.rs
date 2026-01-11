@@ -67,7 +67,7 @@ impl StatusChecker {
 
     async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
         if let Ok(token) = env::var("GITLAB_TOKEN") {
-            let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "https://gitlab.com".to_string());
+            let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
             match gitlab::GitlabBuilder::new(&gitlab_host, token)
                 .build_async()
                 .await
