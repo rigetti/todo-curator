@@ -20,13 +20,13 @@ struct GitLabMergeRequest {
     description: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClosedReference {
     pub reference: TodoReference,
     pub title: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NotFoundReference {
     pub reference: TodoReference,
     pub error: String,

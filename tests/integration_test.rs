@@ -37,6 +37,9 @@ fn test_example_todos_file() {
         cmd.env("GH_TOKEN", token);
     }
 
+    // Remove RUST_LOG to avoid tracing output interfering with tests
+    cmd.env_remove("RUST_LOG");
+
     let output = cmd.output().expect("Failed to execute todo-curator");
 
     // Convert output to string for easier debugging
@@ -122,6 +125,7 @@ fn test_directory_scanning() {
         .arg("check-closed")
         .arg("-p")
         .arg(&data_dir)
+        .env_remove("RUST_LOG")
         .output()
         .expect("Failed to execute todo-curator");
 

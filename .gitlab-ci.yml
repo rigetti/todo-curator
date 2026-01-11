@@ -35,10 +35,27 @@ test:
   script:
     - cargo test
 
-test-api-integration:
+test-api-integration-github:
   extends: [.rust_stable_sccache]
   stage: test
   script:
-    - cargo test --test api_integration_test -- --ignored --nocapture
+    - cargo test --test api_integration_test --features test-integration-github --no-fail-fast
   variables:
+    GH_TOKEN: $GITHUB_TOKEN
+
+test-api-integration-gitlab:
+  extends: [.rust_stable_sccache]
+  stage: test
+  script:
+    - cargo test --test api_integration_test --features test-integration-gitlab --no-fail-fast
+  variables:
+    GITLAB_TOKEN: $GL_TOKEN
+
+test-api-integration-combined:
+  extends: [.rust_stable_sccache]
+  stage: test
+  script:
+    - cargo test --test api_integration_test --features test-integration-github,test-integration-gitlab --no-fail-fast
+  variables:
+    GH_TOKEN: $GITHUB_TOKEN
     GITLAB_TOKEN: $GL_TOKEN
