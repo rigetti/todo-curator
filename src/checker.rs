@@ -58,12 +58,12 @@ impl StatusChecker {
         }
 
         let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
+
         // Parse GitLab URLs:
         // https://gitlab.com/group/subgroup/repo.git
         // git@gitlab.com:group/subgroup/repo.git
         // https://gitlab.com/group/subgroup/repo
-        
+
         if let Some(path) = url.strip_prefix("https://gitlab.com/") {
             Some(path.trim_end_matches(".git").to_string())
         } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
