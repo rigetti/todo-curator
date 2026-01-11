@@ -105,7 +105,7 @@ impl StatusChecker {
         for reference in references {
             match self.check_single_reference(reference).await {
                 Ok(Some(closed_ref)) => closed.push(closed_ref),
-                Ok(None) => {}, // Reference exists but is not closed
+                Ok(None) => {} // Reference exists but is not closed
                 Err(e) => {
                     not_found.push(NotFoundReference {
                         reference: reference.clone(),
@@ -118,16 +118,25 @@ impl StatusChecker {
         Ok(CheckResult { closed, not_found })
     }
 
-    async fn check_single_reference(&self, reference: &TodoReference) -> Result<Option<ClosedReference>> {
+    async fn check_single_reference(
+        &self,
+        reference: &TodoReference,
+    ) -> Result<Option<ClosedReference>> {
         match reference {
-            TodoReference::GitLabIssue { project, number, .. } => {
-                self.check_gitlab_issue(reference, project.as_deref(), *number).await
+            TodoReference::GitLabIssue {
+                project, number, ..
+            } => {
+                self.check_gitlab_issue(reference, project.as_deref(), *number)
+                    .await
             }
             TodoReference::GitHubIssue { repo, number, .. } => {
                 self.check_github_issue(reference, repo, *number).await
             }
-            TodoReference::GitLabMr { project, number, .. } => {
-                self.check_gitlab_mr(reference, project.as_deref(), *number).await
+            TodoReference::GitLabMr {
+                project, number, ..
+            } => {
+                self.check_gitlab_mr(reference, project.as_deref(), *number)
+                    .await
             }
             TodoReference::GitHubPr { repo, number, .. } => {
                 self.check_github_pr(reference, repo, *number).await
@@ -135,13 +144,18 @@ impl StatusChecker {
         }
     }
 
-    async fn check_gitlab_issue(&self, reference: &TodoReference, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_gitlab_issue(
+        &self,
+        reference: &TodoReference,
+        project: Option<&str>,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.gitlab_client.as_ref() else {
             return Ok(None);
         };
 
         let project_path = project.context("GitLab issue requires project path")?;
-        
+
         let endpoint = issues::Issue::builder()
             .project(project_path)
             .issue(number as u64)
@@ -165,7 +179,12 @@ impl StatusChecker {
         }
     }
 
-    async fn check_github_issue(&self, reference: &TodoReference, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_github_issue(
+        &self,
+        reference: &TodoReference,
+        repo: &str,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
@@ -193,13 +212,18 @@ impl StatusChecker {
         }
     }
 
-    async fn check_gitlab_mr(&self, reference: &TodoReference, project: Option<&str>, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_gitlab_mr(
+        &self,
+        reference: &TodoReference,
+        project: Option<&str>,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.gitlab_client.as_ref() else {
             return Ok(None);
         };
 
         let project_path = project.context("GitLab MR requires project path")?;
-        
+
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)
             .merge_request(number as u64)
@@ -221,7 +245,12 @@ impl StatusChecker {
         }
     }
 
-    async fn check_github_pr(&self, reference: &TodoReference, repo: &str, number: u32) -> Result<Option<ClosedReference>> {
+    async fn check_github_pr(
+        &self,
+        reference: &TodoReference,
+        repo: &str,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
@@ -263,7 +292,7 @@ impl StatusChecker {
         }
 
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
+
         // Find MR for this branch
         let endpoint = merge_requests::MergeRequests::builder()
             .project(project)
@@ -284,9 +313,10 @@ impl StatusChecker {
         // Get the first MR and extract issue numbers from description
         let mr = &mrs[0];
         let description = mr.description.as_deref().unwrap_or("");
-        
+
         // Parse "Closes #123" or "Fixes #456" patterns
-        let issue_regex = regex::Regex::new(r"(?i)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)").unwrap();
+        let issue_regex =
+            regex::Regex::new(r"(?i)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)").unwrap();
         let issues: Vec<u32> = issue_regex
             .captures_iter(description)
             .filter_map(|caps| caps.get(1))

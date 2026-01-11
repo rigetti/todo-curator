@@ -22,12 +22,12 @@ enum Commands {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
     },
-    
+
     #[command(about = "Check for TODO comments that should be removed when current MR closes")]
     CheckMrTodos {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
-        
+
         #[arg(long)]
         project: Option<String>,
     },
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 
 async fn check_closed_references(path: PathBuf) -> Result<()> {
     let checker = checker::StatusChecker::new().await?;
-    
+
     checker.check_auth()?;
 
     let extractor = todo::TodoExtractor::new();
@@ -63,10 +63,21 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     let mut has_errors = false;
 
     if !result.closed.is_empty() {
-        eprintln!("{}", "TODO comments referencing closed issues/MRs:".red().bold());
+        eprintln!(
+            "{}",
+            "TODO comments referencing closed issues/MRs:".red().bold()
+        );
         for closed_ref in &result.closed {
-            eprintln!("{}: {}", closed_ref.reference.display().yellow(), closed_ref.title);
-            eprintln!("  {}:{}", closed_ref.reference.file_path().bold(), closed_ref.reference.line_number().to_string().bold());
+            eprintln!(
+                "{}: {}",
+                closed_ref.reference.display().yellow(),
+                closed_ref.title
+            );
+            eprintln!(
+                "  {}:{}",
+                closed_ref.reference.file_path().bold(),
+                closed_ref.reference.line_number().to_string().bold()
+            );
             let source = closed_ref.reference.source_line();
             if !source.is_empty() {
                 eprintln!("  {}", source.dimmed());
@@ -76,10 +87,23 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     }
 
     if !result.not_found.is_empty() {
-        eprintln!("\n{}", "TODO comments referencing non-existent or inaccessible issues/MRs:".red().bold());
+        eprintln!(
+            "\n{}",
+            "TODO comments referencing non-existent or inaccessible issues/MRs:"
+                .red()
+                .bold()
+        );
         for not_found_ref in &result.not_found {
-            eprintln!("{}: {}", not_found_ref.reference.display().yellow(), not_found_ref.error);
-            eprintln!("  {}:{}", not_found_ref.reference.file_path().bold(), not_found_ref.reference.line_number().to_string().bold());
+            eprintln!(
+                "{}: {}",
+                not_found_ref.reference.display().yellow(),
+                not_found_ref.error
+            );
+            eprintln!(
+                "  {}:{}",
+                not_found_ref.reference.file_path().bold(),
+                not_found_ref.reference.line_number().to_string().bold()
+            );
             let source = not_found_ref.reference.source_line();
             if !source.is_empty() {
                 eprintln!("  {}", source.dimmed());
@@ -98,7 +122,7 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
 
 async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
     let checker = checker::StatusChecker::new().await?;
-    
+
     checker.check_auth()?;
 
     let project = project
@@ -111,7 +135,7 @@ async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
         })?;
 
     let issues = checker.get_current_mr_issues(&project).await?;
-    
+
     if issues.is_empty() {
         println!("Not on an MR or no issues will be closed by current MR");
         return Ok(());
@@ -121,22 +145,35 @@ async fn check_mr_todos(path: PathBuf, project: Option<String>) -> Result<()> {
     let all_references = extractor.extract_from_directory(&path)?;
 
     let mut found_todos = false;
-    
+
     for issue_num in issues {
         let matching_refs: Vec<_> = all_references
             .iter()
             .filter(|r| match r {
-                todo::TodoReference::GitLabIssue { project: None, number, .. } => *number == issue_num,
+                todo::TodoReference::GitLabIssue {
+                    project: None,
+                    number,
+                    ..
+                } => *number == issue_num,
                 _ => false,
             })
             .collect();
 
         if !matching_refs.is_empty() {
             if !found_todos {
-                eprintln!("{}", "TODO comments that will be closed by this MR:".yellow().bold());
+                eprintln!(
+                    "{}",
+                    "TODO comments that will be closed by this MR:"
+                        .yellow()
+                        .bold()
+                );
                 found_todos = true;
             }
-            eprintln!("{}: {} reference(s) found", format!("#{}", issue_num).yellow(), matching_refs.len());
+            eprintln!(
+                "{}: {} reference(s) found",
+                format!("#{}", issue_num).yellow(),
+                matching_refs.len()
+            );
         }
     }
 
