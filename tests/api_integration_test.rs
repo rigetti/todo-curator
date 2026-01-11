@@ -115,6 +115,56 @@ fn test_closed_github_issue() {
     );
 }
 
+/// Test that the tool correctly identifies a closed GitLab issue
+/// Uses rigetti/qcs/magneto#1 which is a known closed issue
+#[test]
+#[ignore = "requires GITLAB_TOKEN"]
+fn test_closed_gitlab_issue() {
+    let gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    // Create a temporary test file with a TODO referencing a closed issue
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_closed_gitlab_issue.rs");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/magneto#1\n")
+        .expect("Failed to write test file");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
+        .arg("check-closed")
+        .arg("-p")
+        .arg(&test_file)
+        .env("GITLAB_TOKEN", gitlab_token)
+        .env("GITLAB_URL", "gitlab.com")
+        .output()
+        .expect("Failed to execute todo-curator");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file);
+
+    // The issue is closed, so it should appear in the output
+    assert!(
+        stderr.contains("TODO comments referencing closed issues/MRs:"),
+        "Closed issue should be reported. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
+    );
+
+    assert!(
+        stderr.contains("rigetti/qcs/magneto#1"),
+        "Should mention the specific closed issue. Got:\n{}",
+        stderr
+    );
+
+    // Should exit with error code
+    assert!(
+        !output.status.success(),
+        "Command should fail when closed issues are found"
+    );
+}
+
 /// Test that the tool correctly reports non-existent GitHub issues
 #[test]
 #[ignore = "requires GH_TOKEN"]
@@ -231,6 +281,7 @@ fn test_mixed_issue_states() {
     std::fs::write(
         &test_file,
         "// TODO rigetti/experimental/kstrand/todo-curator#1 - open GitLab issue\n\
+         // TODO rigetti/qcs/magneto#1 - closed GitLab issue\n\
          // TODO github.com/rust-lang/rust#1 - closed GitHub issue\n\
          // TODO github.com/nonexistent-user-xyz/nonexistent-repo-xyz#1 - non-existent\n",
     )
