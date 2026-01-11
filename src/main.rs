@@ -65,8 +65,8 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     if !result.closed.is_empty() {
         eprintln!("{}", "TODO comments referencing closed issues/MRs:".red().bold());
         for closed_ref in &result.closed {
-            eprintln!("{}: {}", closed_ref.reference.display().red(), closed_ref.title);
-            eprintln!("  {}:{}", closed_ref.reference.file_path().dimmed(), closed_ref.reference.line_number().to_string().dimmed());
+            eprintln!("{}: {}", closed_ref.reference.display().yellow(), closed_ref.title);
+            eprintln!("  {}:{}", closed_ref.reference.file_path().bold(), closed_ref.reference.line_number().to_string().bold());
             let source = closed_ref.reference.source_line();
             if !source.is_empty() {
                 eprintln!("  {}", source.dimmed());
@@ -76,10 +76,10 @@ async fn check_closed_references(path: PathBuf) -> Result<()> {
     }
 
     if !result.not_found.is_empty() {
-        eprintln!("\n{}", "TODO comments referencing non-existent or inaccessible issues/MRs:".yellow().bold());
+        eprintln!("\n{}", "TODO comments referencing non-existent or inaccessible issues/MRs:".red().bold());
         for not_found_ref in &result.not_found {
             eprintln!("{}: {}", not_found_ref.reference.display().yellow(), not_found_ref.error);
-            eprintln!("  {}:{}", not_found_ref.reference.file_path().dimmed(), not_found_ref.reference.line_number().to_string().dimmed());
+            eprintln!("  {}:{}", not_found_ref.reference.file_path().bold(), not_found_ref.reference.line_number().to_string().bold());
             let source = not_found_ref.reference.source_line();
             if !source.is_empty() {
                 eprintln!("  {}", source.dimmed());
