@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[expect(clippy::enum_variant_names, reason = "GitHub and GitLab are distinct")]
 pub enum TodoReference {
     GitLabIssue { project: Option<String>, number: u32, source_line: String, file_path: String, line_number: u64 },
     GitHubIssue { repo: String, number: u32, source_line: String, file_path: String, line_number: u64 },

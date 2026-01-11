@@ -20,3 +20,105 @@ grep-regex = "0.1"
 ignore = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[workspace.lints.clippy]
+# lint config is copied from conserv-v2, with minor adjustments
+
+# Opt-in lint groups
+# negative 'priority' makes overriding specific lints easier
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -2 }
+nursery = { level = "warn", priority = -3 }
+
+# Individual lint opt-outs
+missing_errors_doc = "allow"      # The error type and variants themselves are documented
+missing_panics_doc = "allow"      # Panics in public methods only represent logic errors
+module_name_repetitions = "allow" # This lint just seems silly to me
+redundant_pub_crate = "allow"     # Has false positives that conflict with unreachable_pub
+if_not_else = "allow"             # `!=` can sometimes be clearer than `==`
+lint_groups_priority = "allow"    # False positives; see https://github.com/rust-lang/rust-clippy/issues/12920
+
+# Individual lint opt-ins
+arc_with_non_send_sync = "deny"
+await_holding_invalid_type = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+cast_lossless = "deny"
+comparison_chain = "deny"
+disallowed_macros = "deny"
+disallowed_methods = "deny"
+ignore_without_reason = "deny"
+range_minus_one = "deny"
+todo = "deny"
+unconditional_recursion = "deny"
+unreachable = "deny"
+
+dbg_macro = "warn"
+explicit_iter_loop = "warn"
+range_plus_one = "warn"
+
+# Individual lints we'd like to enforce but which the codebase currently violates.
+allow_attributes = "warn"
+arithmetic_side_effects = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+clone_on_ref_ptr = "warn"
+future_not_send = "warn"
+semicolon_if_nothing_returned = "warn"
+undocumented_unsafe_blocks = "warn"
+use_self = "warn"
+
+[workspace.lints.rust]
+# Opt-in lint groups
+# negative 'priority' makes overriding specific lints easier
+keyword_idents = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused = { level = "warn", priority = -1 }
+
+# Individual lint opt-outs
+async_fn_in_trait = "allow"             # This repository is currently entirely private, so we are not worried about breaking changes from trait-bound changes.
+missing_debug_implementations = "allow"
+
+# Individual lint opt-ins
+improper_ctypes = "deny"
+missing_abi = "deny"
+missing_docs = "deny"
+private_bounds = "deny"
+private_interfaces = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(tokio_unstable)'] }
+unfulfilled_lint_expectations = "deny"
+unknown_lints = "deny"
+unreachable_patterns = "deny"
+unused_assignments = "deny"
+unused_must_use = "deny"
+
+# Individual lints we'd like to enforce but which the codebase currently violates.
+absolute_paths_not_starting_with_crate = "warn"
+anonymous_parameters = "warn"
+bad_style = "warn"
+dead_code = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_copy_implementations = "warn"
+no_mangle_generic_items = "warn"
+non_shorthand_field_patterns = "warn"
+noop_method_call = "warn"
+overflowing_literals = "warn"
+path_statements = "warn"
+patterns_in_fns_without_body = "warn"
+semicolon_in_expressions_from_macros = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unconditional_recursion = "warn"
+unreachable_pub = "warn"
+unsafe_code = "warn"
+unused_allocation = "warn"
+unused_comparisons = "warn"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_parens = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+while_true = "warn"
+unused_crate_dependencies = "warn"
