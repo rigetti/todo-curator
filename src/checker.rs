@@ -40,9 +40,39 @@ pub struct CheckResult {
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
     gitlab_client: Option<AsyncGitlab>,
+    default_project: Option<String>,
 }
 
 impl StatusChecker {
+    /// Extract GitLab project path from git remote origin URL
+    /// Returns None if not in a git repo or origin is not a GitLab URL
+    pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
+        let output = std::process::Command::new("git")
+            .args(["remote", "get-url", "origin"])
+            .current_dir(path)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        
+        // Parse GitLab URLs:
+        // https://gitlab.com/group/subgroup/repo.git
+        // git@gitlab.com:group/subgroup/repo.git
+        // https://gitlab.com/group/subgroup/repo
+        
+        if let Some(path) = url.strip_prefix("https://gitlab.com/") {
+            Some(path.trim_end_matches(".git").to_string())
+        } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
+            Some(path.trim_end_matches(".git").to_string())
+        } else {
+            None
+        }
+    }
+
     pub async fn new() -> Result<Self> {
         let github_client = Self::init_github_client()?;
         let gitlab_client = Self::init_gitlab_client().await?;
@@ -50,6 +80,18 @@ impl StatusChecker {
         Ok(Self {
             github_client,
             gitlab_client,
+            default_project: None,
+        })
+    }
+
+    pub async fn with_default_project(default_project: Option<String>) -> Result<Self> {
+        let github_client = Self::init_github_client()?;
+        let gitlab_client = Self::init_gitlab_client().await?;
+
+        Ok(Self {
+            github_client,
+            gitlab_client,
+            default_project,
         })
     }
 
@@ -154,7 +196,9 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project.context("GitLab issue requires project path")?;
+        let project_path = project
+            .or(self.default_project.as_deref())
+            .context("GitLab issue requires project path")?;
 
         let endpoint = issues::Issue::builder()
             .project(project_path)
@@ -222,7 +266,9 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project.context("GitLab MR requires project path")?;
+        let project_path = project
+            .or(self.default_project.as_deref())
+            .context("GitLab MR requires project path")?;
 
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)

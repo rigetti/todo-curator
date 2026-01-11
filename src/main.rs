@@ -45,7 +45,10 @@ async fn main() -> Result<()> {
 }
 
 async fn check_closed_references(path: PathBuf) -> Result<()> {
-    let checker = checker::StatusChecker::new().await?;
+    // Detect GitLab project from git origin for local TODO references
+    let gitlab_project = checker::StatusChecker::detect_gitlab_project(&path);
+    tracing::debug!("GitLab project: {gitlab_project:?}");
+    let checker = checker::StatusChecker::with_default_project(gitlab_project).await?;
 
     checker.check_auth()?;
 

@@ -354,6 +354,8 @@ impl TodoExtractor {
             .hidden(false) // Don't skip hidden files by default
             .git_ignore(true) // Respect .gitignore
             .git_exclude(true) // Respect .git/info/exclude
+            .git_global(true) // Use global gitignore rules
+            .standard_filters(true) // Enable standard filters (skips .git directories)
             .build();
 
         for result in walker {
