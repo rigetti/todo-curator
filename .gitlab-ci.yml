@@ -1,0 +1,30 @@
+stages:
+  - test
+
+workflow:
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+include:
+  - project: "rigetti/qcs/utilities/rust-ci-image"
+    file: "defaults/ci.yaml"
+
+default:
+  image: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
+
+check:
+  extends: [.cargo_check]
+  stage: test
+  variables:
+    KUBERNETES_CPU_REQUEST: 2
+
+clippy:
+  extends: [.cargo_clippy]
+  stage: test
+
+test:
+  extends: [.cargo_nextest]
+  stage: test
+  script:
+    - cargo test
