@@ -23,6 +23,12 @@ clippy:
   extends: [.cargo_clippy]
   stage: test
 
+fmt:
+  extends: [.rust_stable_sccache]
+  stage: test
+  script:
+    - cargo fmt --check
+
 test:
   extends: [.cargo_nextest]
   stage: test
@@ -35,5 +41,4 @@ test-api-integration:
   script:
     - cargo test --test api_integration_test -- --ignored --nocapture
   variables:
-    GH_TOKEN: $GH_TOKEN
-    GITLAB_TOKEN: $CI_JOB_TOKEN
+    GITLAB_TOKEN: $GL_TOKEN
