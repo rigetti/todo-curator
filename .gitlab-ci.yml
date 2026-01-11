@@ -28,3 +28,12 @@ test:
   stage: test
   script:
     - cargo test
+
+test-api-integration:
+  extends: [.rust_stable_sccache]
+  stage: test
+  script:
+    - cargo test --test api_integration_test -- --ignored --nocapture
+  variables:
+    GH_TOKEN: $GH_TOKEN
+    GITLAB_TOKEN: $CI_JOB_TOKEN
