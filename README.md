@@ -13,14 +13,6 @@ This tool replaces the bash scripts `check-todos-closed-issues.sh` and `check-mr
   - `check-mr-todos`: Find TODO comments that reference issues closed by the current MR
 - **No CLI dependencies**: Uses `octocrab` for GitHub and `gitlab` crate for GitLab APIs directly
 
-## Installation
-
-```bash
-cd /Users/kstrand/workspace/todo-curator
-cargo build --release
-cargo install --path .
-```
-
 ## Prerequisites
 
 You need API tokens for GitHub and GitLab:
