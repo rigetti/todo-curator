@@ -1,10 +1,17 @@
 stages:
   - test
+  - publish
+  - cli
 
 workflow:
   rules:
-    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      auto_cancel:
+        on_new_commit: interruptible
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
 
 include:
   - project: "rigetti/qcs/utilities/rust-ci-image"
@@ -59,3 +66,83 @@ test-api-integration-combined:
   variables:
     GH_TOKEN: $GITHUB_TOKEN
     GITLAB_TOKEN: $GL_TOKEN
+
+.knope:
+  stage: publish
+  needs: []
+  script:
+    - !reference [.setup_git]
+    - git_config_insteadof "${CI_PROJECT_PATH}" "${API_CLIENT_PUSH_TOKEN}"
+    - git remote set-url origin "https://git:${API_CLIENT_PUSH_TOKEN}@gitlab.com/${CI_PROJECT_PATH}"
+    - knope --version
+    - echo "KNOPE_FLAGS=$KNOPE_FLAGS"
+    - git switch $CI_COMMIT_REF_NAME
+    - knope release --verbose $KNOPE_FLAGS
+  variables:
+    GIT_DEPTH: 0
+    KNOPE_FLAGS: ""
+
+Dry run Knope release:
+  extends: [.knope]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare new (pre)?release/"
+      when: never
+    - if: $CI_MERGE_REQUEST_IID
+  variables:
+    KNOPE_FLAGS: "--dry-run"
+
+Knope release:
+  extends: [.knope]
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare new (pre)?release/"
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_MERGE_REQUEST_IID
+      when: manual
+      allow_failure: true
+      variables:
+        KNOPE_PRERELEASE_LABEL: "dev-$CI_MERGE_REQUEST_IID"
+
+cli:build:
+  stage: cli
+  needs: []
+  rules:
+    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare release/"
+    - when: manual
+  parallel:
+    matrix:
+      - CLI_BUILD_IMAGE: macos-15-xcode-16
+        CLI_BUILD_RUNNER_TAG: saas-macos-large-m2pro
+      - CLI_BUILD_IMAGE: windows-latest
+        CLI_BUILD_RUNNER_TAG: saas-windows-medium-amd64
+      - CLI_BUILD_IMAGE: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
+        CLI_BUILD_RUNNER_TAG: flexible
+        KUBERNETES_CPU_REQUEST: 14
+        KUBERNETES_MEMORY_LIMIT: 20Gi
+  tags: [$CLI_BUILD_RUNNER_TAG]
+  image: $CLI_BUILD_IMAGE
+  script:
+    - scripts/ci_build_cli.py
+  artifacts:
+    paths:
+      - release/
+    reports:
+      dotenv: build.env
+
+cli:release:
+  stage: cli
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs: [cli:build]
+  rules:
+    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare (pre)?release/"
+  script:
+    - CLI_VERSION="$(knope get-version)"
+    - echo "Creating release with version ${CLI_VERSION}"
+    - glab auth login --hostname gitlab.com --token "${GL_TOKEN}"
+    - glab release create --use-package-registry "${CLI_VERSION}" release/* --name "todo-curator ${CLI_VERSION}" --notes-file CHANGELOG.md --ref "${CI_COMMIT_SHA}"

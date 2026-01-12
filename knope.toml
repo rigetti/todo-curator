@@ -1,0 +1,35 @@
+[package]
+versioned_files = [
+    "Cargo.lock",
+    "Cargo.toml",
+]
+changelog = "CHANGELOG.md"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = 'git commit -m "chore: prepare release $version"'
+
+[[workflows.steps]]
+type = "Release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push -o ci.skip"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --tags -o ci.skip"
+
+[[workflows]]
+name = "get-version"
+help_text = "Get the current version of the project"
+
+[[workflows.steps]]
+type = "Command"
+command = 'echo "$version"'
