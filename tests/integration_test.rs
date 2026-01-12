@@ -53,20 +53,20 @@ fn test_example_todos_file() {
     if std::env::var("GH_TOKEN").is_ok() {
         // With authentication, we expect to find closed issues
         assert!(
-            stderr.contains("TODO comments referencing closed issues/MRs:")
-                || stderr.contains("All TODO references are valid.")
-                || stderr.contains("TODO comments referencing non-existent"),
-            "Expected to find TODO analysis in stderr. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+            stdout.contains("TODO comments referencing closed issues/MRs:")
+                || stdout.contains("All TODO references are valid.")
+                || stdout.contains("TODO comments referencing non-existent"),
+            "Expected to find TODO analysis in stdout. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
             stdout,
             stderr
         );
 
         // Should find the known closed issues from rust-lang/rust#1 and microsoft/vscode#1
-        if stderr.contains("TODO comments referencing closed issues/MRs:") {
+        if stdout.contains("TODO comments referencing closed issues/MRs:") {
             assert!(
-                stderr.contains("rust-lang/rust#1") || stderr.contains("microsoft/vscode#1"),
+                stdout.contains("rust-lang/rust#1") || stdout.contains("microsoft/vscode#1"),
                 "Expected to find known closed issues. Got:\n{}",
-                stderr
+                stdout
             );
         }
     } else {
