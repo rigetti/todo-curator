@@ -96,8 +96,12 @@ async fn test_closed_github_issue() {
         result
     );
 
-    assert_eq!(result.closed.len(), 1, "Should have exactly one closed issue");
-    
+    assert_eq!(
+        result.closed.len(),
+        1,
+        "Should have exactly one closed issue"
+    );
+
     // Verify the specific issue is rust-lang/rust#1
     let closed_issue = &result.closed[0];
     match &closed_issue.reference {
@@ -107,8 +111,11 @@ async fn test_closed_github_issue() {
         }
         _ => panic!("Expected GitHubIssue, got: {:?}", closed_issue.reference),
     }
-    
-    assert_eq!(result.status, "failure", "Status should be failure for closed issue");
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for closed issue"
+    );
 }
 
 /// Test that the tool correctly identifies a closed GitLab issue
@@ -140,19 +147,32 @@ async fn test_closed_gitlab_issue() {
         result
     );
 
-    assert_eq!(result.closed.len(), 1, "Should have exactly one closed issue");
-    
+    assert_eq!(
+        result.closed.len(),
+        1,
+        "Should have exactly one closed issue"
+    );
+
     // Verify the specific issue is rigetti/qcs/magneto#617
     let closed_issue = &result.closed[0];
     match &closed_issue.reference {
-        TodoReference::GitLabIssue { project, number, .. } => {
-            assert_eq!(project.as_deref(), Some("rigetti/qcs/magneto"), "Should be rigetti/qcs/magneto project");
+        TodoReference::GitLabIssue {
+            project, number, ..
+        } => {
+            assert_eq!(
+                project.as_deref(),
+                Some("rigetti/qcs/magneto"),
+                "Should be rigetti/qcs/magneto project"
+            );
             assert_eq!(number, &617, "Should be issue #617");
         }
         _ => panic!("Expected GitLabIssue, got: {:?}", closed_issue.reference),
     }
-    
-    assert_eq!(result.status, "failure", "Status should be failure for closed issue");
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for closed issue"
+    );
 }
 
 /// Test that the tool correctly reports non-existent GitHub issues
@@ -185,19 +205,29 @@ async fn test_nonexistent_github_issue() {
         result
     );
 
-    assert_eq!(result.not_found.len(), 1, "Should have exactly one not found issue");
-    
+    assert_eq!(
+        result.not_found.len(),
+        1,
+        "Should have exactly one not found issue"
+    );
+
     // Verify the specific issue is nonexistent-user-12345/nonexistent-repo-67890#99999
     let not_found_issue = &result.not_found[0];
     match &not_found_issue.reference {
         TodoReference::GitHubIssue { repo, number, .. } => {
-            assert_eq!(repo, "nonexistent-user-12345/nonexistent-repo-67890", "Should be nonexistent-user-12345/nonexistent-repo-67890 repo");
+            assert_eq!(
+                repo, "nonexistent-user-12345/nonexistent-repo-67890",
+                "Should be nonexistent-user-12345/nonexistent-repo-67890 repo"
+            );
             assert_eq!(number, &99999, "Should be issue #99999");
         }
         _ => panic!("Expected GitHubIssue, got: {:?}", not_found_issue.reference),
     }
-    
-    assert_eq!(result.status, "failure", "Status should be failure for non-existent issue");
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for non-existent issue"
+    );
 }
 
 /// Test that the tool correctly reports non-existent GitLab issues
@@ -231,24 +261,40 @@ async fn test_nonexistent_gitlab_issue() {
         result
     );
 
-    assert_eq!(result.not_found.len(), 1, "Should have exactly one not found issue");
-    
+    assert_eq!(
+        result.not_found.len(),
+        1,
+        "Should have exactly one not found issue"
+    );
+
     // Verify the specific issue is rigetti/experimental/kstrand/todo-curator#999999
     let not_found_issue = &result.not_found[0];
     match &not_found_issue.reference {
-        TodoReference::GitLabIssue { project, number, .. } => {
-            assert_eq!(project.as_deref(), Some("rigetti/experimental/kstrand/todo-curator"), "Should be rigetti/experimental/kstrand/todo-curator project");
+        TodoReference::GitLabIssue {
+            project, number, ..
+        } => {
+            assert_eq!(
+                project.as_deref(),
+                Some("rigetti/experimental/kstrand/todo-curator"),
+                "Should be rigetti/experimental/kstrand/todo-curator project"
+            );
             assert_eq!(number, &999999, "Should be issue #999999");
         }
         _ => panic!("Expected GitLabIssue, got: {:?}", not_found_issue.reference),
     }
-    
-    assert_eq!(result.status, "failure", "Status should be failure for non-existent issue");
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for non-existent issue"
+    );
 }
 
 /// Test mixed scenario: open, closed, and non-existent issues
 #[tokio::test]
-#[cfg(all(feature = "test-integration-github", feature = "test-integration-gitlab"))]
+#[cfg(all(
+    feature = "test-integration-github",
+    feature = "test-integration-gitlab"
+))]
 async fn test_mixed_issue_states() {
     let _gh_token = std::env::var("GH_TOKEN").expect("GH_TOKEN must be set for this test");
     let _gitlab_token =
@@ -276,7 +322,8 @@ async fn test_mixed_issue_states() {
 
     // Should report closed issues (both GitHub and GitLab)
     assert_eq!(
-        result.closed.len(), 2,
+        result.closed.len(),
+        2,
         "Should report exactly 2 closed issues. Got: {:?}",
         result.closed
     );
@@ -291,7 +338,9 @@ async fn test_mixed_issue_states() {
                     found_github = true;
                 }
             }
-            TodoReference::GitLabIssue { project, number, .. } => {
+            TodoReference::GitLabIssue {
+                project, number, ..
+            } => {
                 if project.as_deref() == Some("rigetti/qcs/magneto") && number == &617 {
                     found_gitlab = true;
                 }
@@ -299,26 +348,42 @@ async fn test_mixed_issue_states() {
             _ => {}
         }
     }
-    assert!(found_github, "Should find closed GitHub issue rust-lang/rust#1");
-    assert!(found_gitlab, "Should find closed GitLab issue rigetti/qcs/magneto#617");
+    assert!(
+        found_github,
+        "Should find closed GitHub issue rust-lang/rust#1"
+    );
+    assert!(
+        found_gitlab,
+        "Should find closed GitLab issue rigetti/qcs/magneto#617"
+    );
 
     // Should report the non-existent issue
     assert_eq!(
-        result.not_found.len(), 1,
+        result.not_found.len(),
+        1,
         "Should report exactly 1 non-existent issue. Got: {:?}",
         result.not_found
     );
-    
+
     // Verify specific non-existent issue
     let not_found_ref = &result.not_found[0];
     match &not_found_ref.reference {
         TodoReference::GitHubIssue { repo, number, .. } => {
-            assert_eq!(repo, "nonexistent-user-xyz/nonexistent-repo-xyz", "Should be nonexistent-user-xyz/nonexistent-repo-xyz repo");
+            assert_eq!(
+                repo, "nonexistent-user-xyz/nonexistent-repo-xyz",
+                "Should be nonexistent-user-xyz/nonexistent-repo-xyz repo"
+            );
             assert_eq!(number, &1, "Should be issue #1");
         }
-        _ => panic!("Expected GitHubIssue for not_found, got: {:?}", not_found_ref.reference),
+        _ => panic!(
+            "Expected GitHubIssue for not_found, got: {:?}",
+            not_found_ref.reference
+        ),
     }
 
     // Status should be failure due to closed and non-existent issues
-    assert_eq!(result.status, "failure", "Status should be failure when problems are found");
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure when problems are found"
+    );
 }

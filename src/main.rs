@@ -57,9 +57,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::CheckClosed { path, format, output: output_path } => {
+        Commands::CheckClosed {
+            path,
+            format,
+            output: output_path,
+        } => {
             let result = check_closed_references(path).await?;
-            
+
             if let Some(path) = output_path {
                 let mut file = File::create(path)?;
                 print_output(&mut file, &result, format)?;
@@ -67,19 +71,26 @@ async fn main() -> Result<()> {
                 let mut stdout = io::stdout();
                 print_output(&mut stdout, &result, format)?;
             }
-            
+
             if result.has_errors() {
                 process::exit(1);
             }
             Ok(())
         }
-        Commands::CheckMrTodos { path, project, format, output: output_path } => {
-            check_mr_todos(path, project, format, output_path).await
-        }
+        Commands::CheckMrTodos {
+            path,
+            project,
+            format,
+            output: output_path,
+        } => check_mr_todos(path, project, format, output_path).await,
     }
 }
 
-fn print_output<W: Write>(writer: &mut W, output: &CheckOutput, format: OutputFormat) -> Result<()> {
+fn print_output<W: Write>(
+    writer: &mut W,
+    output: &CheckOutput,
+    format: OutputFormat,
+) -> Result<()> {
     match format {
         OutputFormat::Json => {
             // Use serde to serialize the output
@@ -181,7 +192,10 @@ async fn check_mr_todos(
     let issues = checker.get_current_mr_issues(&project).await?;
 
     if issues.is_empty() {
-        writeln!(output, "Not on an MR or no issues will be closed by current MR")?;
+        writeln!(
+            output,
+            "Not on an MR or no issues will be closed by current MR"
+        )?;
         return Ok(());
     }
 
@@ -227,6 +241,10 @@ async fn check_mr_todos(
         process::exit(1);
     }
 
-    writeln!(output, "{}", "No TODOs reference issues closed by this MR.".green())?;
+    writeln!(
+        output,
+        "{}",
+        "No TODOs reference issues closed by this MR.".green()
+    )?;
     Ok(())
 }
