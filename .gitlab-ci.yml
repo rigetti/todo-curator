@@ -1,6 +1,6 @@
 stages:
   - test
-  - publish
+  - release
   - cli
 
 workflow:
@@ -14,6 +14,9 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 include:
+  - project: "rigetti/qcs/utilities/qcs-ci-toolkit"
+    file:
+      - "gitlab-ci/knope/lib.yaml"
   - project: "rigetti/qcs/utilities/rust-ci-image"
     file: "defaults/ci.yaml"
 
@@ -67,47 +70,17 @@ test-api-integration-combined:
     GH_TOKEN: $GITHUB_TOKEN
     GITLAB_TOKEN: $GL_TOKEN
 
-.knope:
-  stage: publish
-  needs: []
-  script:
-    - !reference [.setup_git]
-    - git_config_insteadof "${CI_PROJECT_PATH}" "${API_CLIENT_PUSH_TOKEN}"
-    - git remote set-url origin "https://git:${API_CLIENT_PUSH_TOKEN}@gitlab.com/${CI_PROJECT_PATH}"
-    - knope --version
-    - echo "KNOPE_FLAGS=$KNOPE_FLAGS"
-    - git switch $CI_COMMIT_REF_NAME
-    - knope release --verbose $KNOPE_FLAGS
-  variables:
-    GIT_DEPTH: 0
-    KNOPE_FLAGS: ""
-
 Dry run Knope release:
-  extends: [.knope]
+  extends: [.knope_dry_run]
+  needs: []
+  stage: release
   rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare new (pre)?release/"
-      when: never
     - if: $CI_MERGE_REQUEST_IID
-  variables:
-    KNOPE_FLAGS: "--dry-run"
 
 Knope release:
-  extends: [.knope]
-  interruptible: false
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare new (pre)?release/"
-      when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-    - if: $CI_MERGE_REQUEST_IID
-      when: manual
-      allow_failure: true
-      variables:
-        KNOPE_PRERELEASE_LABEL: "dev-$CI_MERGE_REQUEST_IID"
+  extends: [.knope_release]
+  needs: []
+  stage: release
 
 cli:build:
   stage: cli
