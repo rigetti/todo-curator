@@ -16,12 +16,17 @@ workflow:
 include:
   - project: "rigetti/qcs/utilities/qcs-ci-toolkit"
     file:
+      - "gitlab-ci/gitlab/defaults.yaml"
       - "gitlab-ci/knope/lib.yaml"
   - project: "rigetti/qcs/utilities/rust-ci-image"
     file: "defaults/ci.yaml"
 
 default:
   image: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
+  tags:
+    - default
+  interruptible: true
+  retry: !reference [.default_retry_policy]
 
 check:
   extends: [.cargo_check]
