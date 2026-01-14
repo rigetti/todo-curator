@@ -20,7 +20,8 @@ type = "Release"
 
 [[workflows.steps]]
 type = "Command"
-command = "git push -o ci.skip"
+# This must trigger the job to actually build the CLI binary and installers.
+command = "git push"
 
 [[workflows.steps]]
 type = "Command"
