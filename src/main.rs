@@ -16,6 +16,7 @@ enum OutputFormat {
 #[derive(Parser)]
 #[command(name = "todo-curator")]
 #[command(about = "Check TODO comments against issue/MR status", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
