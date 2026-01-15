@@ -1,6 +1,6 @@
 [package]
 name = "todo-curator"
-version = "0.1.1-dev.2"
+version = "0.1.1-dev.3"
 edition = "2021"
 publish = ["crates-io"]
 
