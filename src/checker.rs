@@ -96,7 +96,11 @@ impl StatusChecker {
     }
 
     fn init_github_client() -> Result<Option<Octocrab>> {
-        if let Ok(token) = env::var("GH_TOKEN") {
+        let token = env::var("GH_TOKEN")
+            .or_else(|_| env::var("GITHUB_TOKEN"))
+            .ok();
+        
+        if let Some(token) = token {
             let octocrab = Octocrab::builder()
                 .personal_token(token)
                 .build()
@@ -108,7 +112,11 @@ impl StatusChecker {
     }
 
     async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
-        if let Ok(token) = env::var("GITLAB_TOKEN") {
+        let token = env::var("GITLAB_TOKEN")
+            .or_else(|_| env::var("GL_TOKEN"))
+            .ok();
+        
+        if let Some(token) = token {
             let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
             match gitlab::GitlabBuilder::new(&gitlab_host, token)
                 .build_async()
@@ -130,7 +138,7 @@ impl StatusChecker {
         if self.gitlab_client.is_none() && self.github_client.is_none() {
             anyhow::bail!(
                 "No authentication configured.\n\
-                Set GH_TOKEN and/or GITLAB_TOKEN environment variables with your personal access tokens.\n\
+                Set GH_TOKEN (or GITHUB_TOKEN) and/or GITLAB_TOKEN (or GL_TOKEN) environment variables with your personal access tokens.\n\
                 - GitHub: https://github.com/settings/tokens (requires 'repo' scope)\n\
                 - GitLab: https://gitlab.com/-/user_settings/personal_access_tokens (requires 'api' scope)\n\
                 Optionally set GITLAB_URL for self-hosted GitLab (defaults to gitlab.com)."
