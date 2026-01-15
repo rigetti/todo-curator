@@ -47,6 +47,17 @@ impl StatusChecker {
     /// Extract GitLab project path from CI_PROJECT_PATH or git remote origin URL
     /// Returns None if not in a git repo or origin is not a GitLab URL
     pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
+        /* XXX TEMP
+        if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
+            tracing::warn!(
+                ci_project_path,
+                "ignoring local project; unknown gitlab url format: {}",
+                url
+            );
+            return Some(ci_project_path);
+        }
+        */
+
         // Fall back to detecting from git remote using gix
         let repo = match gix::discover(path) {
             Ok(repo) => repo,
@@ -64,34 +75,17 @@ impl StatusChecker {
             }
         };
 
-        let url = match remote.url(gix::remote::Direction::Fetch) {
-            Some(url) => url.to_bstring().to_string(),
-            None => {
-                tracing::warn!("origin remote has no fetch URL");
-                return None;
-            }
+        let Some(url) = remote.url(gix::remote::Direction::Fetch) else {
+            tracing::warn!("origin remote has no fetch URL");
+            return None;
         };
 
-        // Parse GitLab URLs:
-        // https://gitlab.com/group/subgroup/repo.git
-        // git@gitlab.com:group/subgroup/repo.git
-        // https://gitlab.com/group/subgroup/repo
-
-        if let Some(path) = url.strip_prefix("https://gitlab.com/") {
-            Some(path.trim_end_matches(".git").to_string())
-        } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
-            Some(path.trim_end_matches(".git").to_string())
-        } else if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
-            tracing::warn!(
-                ci_project_path,
-                "ignoring local project; unknown gitlab url format: {}",
-                url
-            );
-            Some(ci_project_path)
-        } else {
-            tracing::warn!("ignoring local project; unknown gitlab url format: {}", url);
-            None
+        if url.host() != Some("gitlab.com") {
+            tracing::warn!("origin remote is not a GitLab URL");
+            return None;
         }
+
+        url.path_argument_safe().map(|p| p.to_string())
     }
 
     pub async fn new() -> Result<Self> {
