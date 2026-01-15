@@ -110,17 +110,14 @@ cli:build:
   artifacts:
     paths:
       - release/
-    reports:
-      dotenv: build.env
 
 cli:release:
   stage: cli
-  image: registry.gitlab.com/gitlab-org/cli:latest
-  # `cli:build` will set `CLI_VERSION` in `build.env`
   needs: [cli:build]
   rules:
     - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare (pre)?release/"
   script:
+    - CLI_VERSION="$(knope get-version)"
     - echo "Creating release with version ${CLI_VERSION}"
     - glab auth login --hostname gitlab.com --token "${GL_TOKEN}"
     - glab release create --use-package-registry "${CLI_VERSION}" release/* --name "todo-curator ${CLI_VERSION}" --notes-file CHANGELOG.md --ref "${CI_COMMIT_SHA}"

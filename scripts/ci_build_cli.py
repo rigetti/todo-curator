@@ -155,31 +155,6 @@ def main() -> None:
 
     print(f"todo-curator built at {exe}")
 
-    if os_name == "linux":
-        build_dot_env = Path(cwd / "build.env")
-
-        print(f"Saving version to {build_dot_env}...")
-        metadata = subprocess.run(
-            [
-                "cargo",
-                "metadata",
-                "--format-version",
-                "1",
-                "--manifest-path",
-                "Cargo.toml",
-                "--no-deps",
-            ],
-            stdout=subprocess.PIPE,
-        )
-        metadata.check_returncode()
-        packages = json.loads(metadata.stdout)["packages"]
-        todo_curator = next((p for p in packages if p["name"] == "todo-curator"), None)
-        version = todo_curator["version"]
-        print(f"Version is: {version}")
-
-        build_dot_env.write_text(f"CLI_VERSION=todo-curator/v{version}")
-        print(f"Wrote version to {build_dot_env}")
-
 
 if __name__ == "__main__":
     main()
