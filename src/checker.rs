@@ -82,7 +82,11 @@ impl StatusChecker {
         } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
             Some(path.trim_end_matches(".git").to_string())
         } else if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
-            tracing::warn!(ci_project_path, "ignoring local project; unknown gitlab url format: {}", url);
+            tracing::warn!(
+                ci_project_path,
+                "ignoring local project; unknown gitlab url format: {}",
+                url
+            );
             Some(ci_project_path)
         } else {
             tracing::warn!("ignoring local project; unknown gitlab url format: {}", url);
