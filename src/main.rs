@@ -181,10 +181,11 @@ async fn check_mr_todos(
     checker.check_auth()?;
 
     let project = project
+        .or_else(|| std::env::var("CI_PROJECT_PATH").ok())
         .or_else(|| std::env::var("GITLAB_PROJECT").ok())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "GitLab project path required. Set --project flag or GITLAB_PROJECT environment variable.\n\
+                "GitLab project path required. Set --project flag, CI_PROJECT_PATH, or GITLAB_PROJECT environment variable.\n\
                 Example: --project group/subgroup/repo"
             )
         })?;

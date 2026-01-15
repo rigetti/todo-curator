@@ -44,9 +44,10 @@ pub struct StatusChecker {
 }
 
 impl StatusChecker {
-    /// Extract GitLab project path from git remote origin URL
+    /// Extract GitLab project path from CI_PROJECT_PATH or git remote origin URL
     /// Returns None if not in a git repo or origin is not a GitLab URL
     pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
+        // Fall back to detecting from git remote
         let output = std::process::Command::new("git")
             .args(["remote", "get-url", "origin"])
             .current_dir(path)
@@ -54,6 +55,7 @@ impl StatusChecker {
             .ok()?;
 
         if !output.status.success() {
+            tracing::warn!(error=%String::from_utf8_lossy(&output.stderr), "not in a valid git repository");
             return None;
         }
 
@@ -68,7 +70,12 @@ impl StatusChecker {
             Some(path.trim_end_matches(".git").to_string())
         } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
             Some(path.trim_end_matches(".git").to_string())
+        } else if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
+            // TODO make this check first; right now trying to debug the issue
+            tracing::warn!(ci_project_path, "ignoring local project; unknown gitlab url format: {}", url);
+            Some(ci_project_path)
         } else {
+            tracing::warn!("ignoring local project; unknown gitlab url format: {}", url);
             None
         }
     }
