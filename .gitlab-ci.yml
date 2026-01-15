@@ -97,12 +97,13 @@ cli:build:
     matrix:
       - CLI_BUILD_IMAGE: macos-15-xcode-16
         CLI_BUILD_RUNNER_TAG: saas-macos-large-m2pro
-      - CLI_BUILD_IMAGE: windows-latest
-        CLI_BUILD_RUNNER_TAG: saas-windows-medium-amd64
       - CLI_BUILD_IMAGE: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
         CLI_BUILD_RUNNER_TAG: flexible
         KUBERNETES_CPU_REQUEST: 14
         KUBERNETES_MEMORY_LIMIT: 20Gi
+      # Uncomment if we ever actually need a Windows version of the tool
+      # - CLI_BUILD_IMAGE: windows-latest
+      #   CLI_BUILD_RUNNER_TAG: saas-windows-medium-amd64
   tags: [$CLI_BUILD_RUNNER_TAG]
   image: $CLI_BUILD_IMAGE
   script:

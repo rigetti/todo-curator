@@ -99,7 +99,7 @@ impl StatusChecker {
         let token = env::var("GH_TOKEN")
             .or_else(|_| env::var("GITHUB_TOKEN"))
             .ok();
-        
+
         if let Some(token) = token {
             let octocrab = Octocrab::builder()
                 .personal_token(token)
@@ -115,7 +115,7 @@ impl StatusChecker {
         let token = env::var("GITLAB_TOKEN")
             .or_else(|_| env::var("GL_TOKEN"))
             .ok();
-        
+
         if let Some(token) = token {
             let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
             match gitlab::GitlabBuilder::new(&gitlab_host, token)
