@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "todo-curator"
-version = "0.1.1-dev.4"
+version = "0.1.1-dev.5"
 dependencies = [
  "anyhow",
  "clap",
