@@ -28,6 +28,7 @@ grep-regex = "0.1"
 ignore = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+gix = "0.68"
 
 [workspace.lints.clippy]
 # lint config is copied from conserv-v2, with minor adjustments

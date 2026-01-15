@@ -47,19 +47,30 @@ impl StatusChecker {
     /// Extract GitLab project path from CI_PROJECT_PATH or git remote origin URL
     /// Returns None if not in a git repo or origin is not a GitLab URL
     pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
-        // Fall back to detecting from git remote
-        let output = std::process::Command::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(path)
-            .output()
-            .ok()?;
+        // Fall back to detecting from git remote using gix
+        let repo = match gix::discover(path) {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::warn!(error=%e, "not in a valid git repository");
+                return None;
+            }
+        };
 
-        if !output.status.success() {
-            tracing::warn!(error=%String::from_utf8_lossy(&output.stderr), "not in a valid git repository");
-            return None;
-        }
+        let remote = match repo.find_remote("origin") {
+            Ok(remote) => remote,
+            Err(e) => {
+                tracing::warn!(error=%e, "failed to find origin remote");
+                return None;
+            }
+        };
 
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let url = match remote.url(gix::remote::Direction::Fetch) {
+            Some(url) => url.to_bstring().to_string(),
+            None => {
+                tracing::warn!("origin remote has no fetch URL");
+                return None;
+            }
+        };
 
         // Parse GitLab URLs:
         // https://gitlab.com/group/subgroup/repo.git
@@ -71,7 +82,6 @@ impl StatusChecker {
         } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
             Some(path.trim_end_matches(".git").to_string())
         } else if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
-            // TODO make this check first; right now trying to debug the issue
             tracing::warn!(ci_project_path, "ignoring local project; unknown gitlab url format: {}", url);
             Some(ci_project_path)
         } else {
@@ -343,16 +353,29 @@ impl StatusChecker {
         };
 
         // Get current branch name to find the MR
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .context("Failed to get current git branch")?;
+        let repo = match gix::discover(".") {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::warn!(error=%e, "not in a valid git repository");
+                return Ok(Vec::new());
+            }
+        };
 
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
+        let head = match repo.head() {
+            Ok(head) => head,
+            Err(e) => {
+                tracing::warn!(error=%e, "failed to get HEAD reference");
+                return Ok(Vec::new());
+            }
+        };
 
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let branch = match head.referent_name() {
+            Some(name) => name.shorten().to_string(),
+            None => {
+                tracing::warn!("HEAD is detached, not on a branch");
+                return Ok(Vec::new());
+            }
+        };
 
         // Find MR for this branch
         let endpoint = merge_requests::MergeRequests::builder()
