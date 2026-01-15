@@ -7,6 +7,13 @@ use octocrab::Octocrab;
 use serde::{Deserialize, Serialize};
 use std::env;
 
+#[derive(Debug, Clone)]
+pub enum ProjectDetection {
+    None,
+    GitHub(String),
+    GitLab(String),
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabIssue {
     title: String,
@@ -40,30 +47,24 @@ pub struct CheckResult {
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
     gitlab_client: Option<AsyncGitlab>,
-    default_project: Option<String>,
+    default_project: ProjectDetection,
 }
 
 impl StatusChecker {
-    /// Extract GitLab project path from CI_PROJECT_PATH or git remote origin URL
-    /// Returns None if not in a git repo or origin is not a GitLab URL
-    pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
-        /* XXX TEMP
+    /// Detect project from git remote origin URL
+    /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
+    pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
+        // Check for CI_PROJECT_PATH first (GitLab CI)
         if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
-            tracing::warn!(
-                ci_project_path,
-                "ignoring local project; unknown gitlab url format: {}",
-                url
-            );
-            return Some(ci_project_path);
+            return ProjectDetection::GitLab(ci_project_path);
         }
-        */
 
-        // Fall back to detecting from git remote using gix
+        // Try to discover git repository
         let repo = match gix::discover(path) {
             Ok(repo) => repo,
             Err(e) => {
                 tracing::warn!(error=%e, "not in a valid git repository");
-                return None;
+                return ProjectDetection::None;
             }
         };
 
@@ -71,21 +72,33 @@ impl StatusChecker {
             Ok(remote) => remote,
             Err(e) => {
                 tracing::warn!(error=%e, "failed to find origin remote");
-                return None;
+                return ProjectDetection::None;
             }
         };
 
         let Some(url) = remote.url(gix::remote::Direction::Fetch) else {
             tracing::warn!("origin remote has no fetch URL");
-            return None;
+            return ProjectDetection::None;
         };
 
-        if url.host() != Some("gitlab.com") {
-            tracing::warn!("origin remote is not a GitLab URL");
-            return None;
+        // Check host to determine GitHub vs GitLab
+        match url.host() {
+            Some("github.com") => {
+                if let Some(path) = url.path_argument_safe() {
+                    ProjectDetection::GitHub(path.to_string())
+                } else {
+                    ProjectDetection::None
+                }
+            }
+            Some("gitlab.com") => {
+                if let Some(path) = url.path_argument_safe() {
+                    ProjectDetection::GitLab(path.to_string())
+                } else {
+                    ProjectDetection::None
+                }
+            }
+            _ => ProjectDetection::None,
         }
-
-        url.path_argument_safe().map(|p| p.to_string())
     }
 
     pub async fn new() -> Result<Self> {
@@ -95,11 +108,11 @@ impl StatusChecker {
         Ok(Self {
             github_client,
             gitlab_client,
-            default_project: None,
+            default_project: ProjectDetection::None,
         })
     }
 
-    pub async fn with_default_project(default_project: Option<String>) -> Result<Self> {
+    pub async fn with_default_project(default_project: ProjectDetection) -> Result<Self> {
         let github_client = Self::init_github_client()?;
         let gitlab_client = Self::init_gitlab_client().await?;
 
@@ -195,7 +208,7 @@ impl StatusChecker {
                     .await
             }
             TodoReference::GitHubIssue { repo, number, .. } => {
-                self.check_github_issue(reference, repo, *number).await
+                self.check_github_issue(reference, repo.as_deref(), *number).await
             }
             TodoReference::GitLabMr {
                 project, number, ..
@@ -219,9 +232,13 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project
-            .or(self.default_project.as_deref())
-            .context("GitLab issue requires project path")?;
+        let project_path = match project {
+            Some(p) => p,
+            None => match &self.default_project {
+                ProjectDetection::GitLab(p) => p.as_str(),
+                _ => anyhow::bail!("GitLab issue requires project path"),
+            },
+        };
 
         let endpoint = issues::Issue::builder()
             .project(project_path)
@@ -249,16 +266,24 @@ impl StatusChecker {
     async fn check_github_issue(
         &self,
         reference: &TodoReference,
-        repo: &str,
+        repo: Option<&str>,
         number: u32,
     ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
 
-        let parts: Vec<&str> = repo.split('/').collect();
+        let repo_path = match repo {
+            Some(r) => r,
+            None => match &self.default_project {
+                ProjectDetection::GitHub(r) => r.as_str(),
+                _ => anyhow::bail!("GitHub issue requires repository path"),
+            },
+        };
+
+        let parts: Vec<&str> = repo_path.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo);
+            anyhow::bail!("Invalid GitHub repo format: {}", repo_path);
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
@@ -289,9 +314,13 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project
-            .or(self.default_project.as_deref())
-            .context("GitLab MR requires project path")?;
+        let project_path = match project {
+            Some(p) => p,
+            None => match &self.default_project {
+                ProjectDetection::GitLab(p) => p.as_str(),
+                _ => anyhow::bail!("GitLab MR requires project path"),
+            },
+        };
 
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)

@@ -46,10 +46,20 @@ impl CheckOutput {
 
 /// Check closed references in a directory
 pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
-    // Detect GitLab project from git origin for local TODO references
-    let gitlab_project = checker::StatusChecker::detect_gitlab_project(&path);
-    tracing::debug!("GitLab project: {gitlab_project:?}");
-    let checker = checker::StatusChecker::with_default_project(gitlab_project).await?;
+    // Detect GitHub and GitLab projects from git origin for local TODO references
+    let project_detection = checker::StatusChecker::detect_project(&path);
+    match &project_detection {
+        checker::ProjectDetection::GitLab(project) => {
+            tracing::debug!("Detected GitLab project: {project}");
+        }
+        checker::ProjectDetection::GitHub(repo) => {
+            tracing::debug!("Detected GitHub repo: {repo}");
+        }
+        checker::ProjectDetection::None => {
+            tracing::debug!("No project detected");
+        }
+    };
+    let checker = checker::StatusChecker::with_default_project(project_detection).await?;
 
     checker.check_auth()?;
 

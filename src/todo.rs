@@ -19,7 +19,7 @@ pub enum TodoReference {
         line_number: u64,
     },
     GitHubIssue {
-        repo: String,
+        repo: Option<String>,
         number: u32,
         source_line: String,
         file_path: String,
@@ -54,7 +54,8 @@ impl TodoReference {
                 number,
                 ..
             } => format!("{}#{}", p, number),
-            TodoReference::GitHubIssue { repo, number, .. } => format!("{}#{}", repo, number),
+            TodoReference::GitHubIssue { repo: Some(repo), number, .. } => format!("{}#{}", repo, number),
+            TodoReference::GitHubIssue { repo: None, number, .. } => format!("#{}", number),
             TodoReference::GitLabMr {
                 project: None,
                 number,
@@ -167,7 +168,7 @@ impl TodoExtractor {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::GitHubIssue {
-                            repo,
+                            repo: Some(repo),
                             number,
                             source_line: line.trim().to_string(),
                             file_path: file_path.to_string(),
@@ -184,7 +185,7 @@ impl TodoExtractor {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::GitHubIssue {
-                            repo,
+                            repo: Some(repo),
                             number,
                             source_line: line.trim().to_string(),
                             file_path: file_path.to_string(),
@@ -201,7 +202,7 @@ impl TodoExtractor {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::GitHubIssue {
-                            repo,
+                            repo: Some(repo),
                             number,
                             source_line: line.trim().to_string(),
                             file_path: file_path.to_string(),
