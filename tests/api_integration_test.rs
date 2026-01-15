@@ -106,7 +106,11 @@ async fn test_closed_github_issue() {
     let closed_issue = &result.closed[0];
     match &closed_issue.reference {
         TodoReference::GitHubIssue { repo, number, .. } => {
-            assert_eq!(repo, "rust-lang/rust", "Should be rust-lang/rust repo");
+            assert_eq!(
+                repo.as_deref(),
+                Some("rust-lang/rust"),
+                "Should be rust-lang/rust repo"
+            );
             assert_eq!(number, &1, "Should be issue #1");
         }
         _ => panic!("Expected GitHubIssue, got: {:?}", closed_issue.reference),
@@ -216,7 +220,8 @@ async fn test_nonexistent_github_issue() {
     match &not_found_issue.reference {
         TodoReference::GitHubIssue { repo, number, .. } => {
             assert_eq!(
-                repo, "nonexistent-user-12345/nonexistent-repo-67890",
+                repo.as_deref(),
+                Some("nonexistent-user-12345/nonexistent-repo-67890"),
                 "Should be nonexistent-user-12345/nonexistent-repo-67890 repo"
             );
             assert_eq!(number, &99999, "Should be issue #99999");
@@ -334,7 +339,7 @@ async fn test_mixed_issue_states() {
     for closed_ref in &result.closed {
         match &closed_ref.reference {
             TodoReference::GitHubIssue { repo, number, .. } => {
-                if repo == "rust-lang/rust" && number == &1 {
+                if repo.as_deref() == Some("rust-lang/rust") && number == &1 {
                     found_github = true;
                 }
             }
@@ -370,7 +375,8 @@ async fn test_mixed_issue_states() {
     match &not_found_ref.reference {
         TodoReference::GitHubIssue { repo, number, .. } => {
             assert_eq!(
-                repo, "nonexistent-user-xyz/nonexistent-repo-xyz",
+                repo.as_deref(),
+                Some("nonexistent-user-xyz/nonexistent-repo-xyz"),
                 "Should be nonexistent-user-xyz/nonexistent-repo-xyz repo"
             );
             assert_eq!(number, &1, "Should be issue #1");

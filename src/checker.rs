@@ -7,6 +7,13 @@ use octocrab::Octocrab;
 use serde::{Deserialize, Serialize};
 use std::env;
 
+#[derive(Debug, Clone)]
+pub enum ProjectDetection {
+    None,
+    GitHub(String),
+    GitLab(String),
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabIssue {
     title: String,
@@ -40,36 +47,57 @@ pub struct CheckResult {
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
     gitlab_client: Option<AsyncGitlab>,
-    default_project: Option<String>,
+    default_project: ProjectDetection,
 }
 
 impl StatusChecker {
-    /// Extract GitLab project path from git remote origin URL
-    /// Returns None if not in a git repo or origin is not a GitLab URL
-    pub fn detect_gitlab_project(path: &std::path::Path) -> Option<String> {
-        let output = std::process::Command::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(path)
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
+    /// Detect project from git remote origin URL
+    /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
+    pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
+        // Check for CI_PROJECT_PATH first (GitLab CI)
+        if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
+            return ProjectDetection::GitLab(ci_project_path);
         }
 
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // Try to discover git repository
+        let repo = match gix::discover(path) {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::warn!(error=%e, "not in a valid git repository");
+                return ProjectDetection::None;
+            }
+        };
 
-        // Parse GitLab URLs:
-        // https://gitlab.com/group/subgroup/repo.git
-        // git@gitlab.com:group/subgroup/repo.git
-        // https://gitlab.com/group/subgroup/repo
+        let remote = match repo.find_remote("origin") {
+            Ok(remote) => remote,
+            Err(e) => {
+                tracing::warn!(error=%e, "failed to find origin remote");
+                return ProjectDetection::None;
+            }
+        };
 
-        if let Some(path) = url.strip_prefix("https://gitlab.com/") {
-            Some(path.trim_end_matches(".git").to_string())
-        } else if let Some(path) = url.strip_prefix("git@gitlab.com:") {
-            Some(path.trim_end_matches(".git").to_string())
-        } else {
-            None
+        let Some(url) = remote.url(gix::remote::Direction::Fetch) else {
+            tracing::warn!("origin remote has no fetch URL");
+            return ProjectDetection::None;
+        };
+
+        // Check host to determine GitHub vs GitLab
+        match url.host() {
+            Some("github.com") => {
+                if let Some(path) = url.path_argument_safe() {
+                    ProjectDetection::GitHub(path.to_string())
+                } else {
+                    ProjectDetection::None
+                }
+            }
+            Some("gitlab.com") => {
+                if let Some(path) = url.path_argument_safe() {
+                    ProjectDetection::GitLab(path.to_string())
+                } else {
+                    ProjectDetection::None
+                }
+            }
+            _ => ProjectDetection::None,
         }
     }
 
@@ -80,11 +108,11 @@ impl StatusChecker {
         Ok(Self {
             github_client,
             gitlab_client,
-            default_project: None,
+            default_project: ProjectDetection::None,
         })
     }
 
-    pub async fn with_default_project(default_project: Option<String>) -> Result<Self> {
+    pub async fn with_default_project(default_project: ProjectDetection) -> Result<Self> {
         let github_client = Self::init_github_client()?;
         let gitlab_client = Self::init_gitlab_client().await?;
 
@@ -96,7 +124,11 @@ impl StatusChecker {
     }
 
     fn init_github_client() -> Result<Option<Octocrab>> {
-        if let Ok(token) = env::var("GH_TOKEN") {
+        let token = env::var("GH_TOKEN")
+            .or_else(|_| env::var("GITHUB_TOKEN"))
+            .ok();
+
+        if let Some(token) = token {
             let octocrab = Octocrab::builder()
                 .personal_token(token)
                 .build()
@@ -108,7 +140,11 @@ impl StatusChecker {
     }
 
     async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
-        if let Ok(token) = env::var("GITLAB_TOKEN") {
+        let token = env::var("GITLAB_TOKEN")
+            .or_else(|_| env::var("GL_TOKEN"))
+            .ok();
+
+        if let Some(token) = token {
             let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
             match gitlab::GitlabBuilder::new(&gitlab_host, token)
                 .build_async()
@@ -130,7 +166,7 @@ impl StatusChecker {
         if self.gitlab_client.is_none() && self.github_client.is_none() {
             anyhow::bail!(
                 "No authentication configured.\n\
-                Set GH_TOKEN and/or GITLAB_TOKEN environment variables with your personal access tokens.\n\
+                Set GH_TOKEN (or GITHUB_TOKEN) and/or GITLAB_TOKEN (or GL_TOKEN) environment variables with your personal access tokens.\n\
                 - GitHub: https://github.com/settings/tokens (requires 'repo' scope)\n\
                 - GitLab: https://gitlab.com/-/user_settings/personal_access_tokens (requires 'api' scope)\n\
                 Optionally set GITLAB_URL for self-hosted GitLab (defaults to gitlab.com)."
@@ -172,7 +208,8 @@ impl StatusChecker {
                     .await
             }
             TodoReference::GitHubIssue { repo, number, .. } => {
-                self.check_github_issue(reference, repo, *number).await
+                self.check_github_issue(reference, repo.as_deref(), *number)
+                    .await
             }
             TodoReference::GitLabMr {
                 project, number, ..
@@ -196,9 +233,13 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project
-            .or(self.default_project.as_deref())
-            .context("GitLab issue requires project path")?;
+        let project_path = match project {
+            Some(p) => p,
+            None => match &self.default_project {
+                ProjectDetection::GitLab(p) => p.as_str(),
+                _ => anyhow::bail!("GitLab issue requires project path"),
+            },
+        };
 
         let endpoint = issues::Issue::builder()
             .project(project_path)
@@ -226,16 +267,24 @@ impl StatusChecker {
     async fn check_github_issue(
         &self,
         reference: &TodoReference,
-        repo: &str,
+        repo: Option<&str>,
         number: u32,
     ) -> Result<Option<ClosedReference>> {
         let Some(client) = self.github_client.as_ref() else {
             return Ok(None);
         };
 
-        let parts: Vec<&str> = repo.split('/').collect();
+        let repo_path = match repo {
+            Some(r) => r,
+            None => match &self.default_project {
+                ProjectDetection::GitHub(r) => r.as_str(),
+                _ => anyhow::bail!("GitHub issue requires repository path"),
+            },
+        };
+
+        let parts: Vec<&str> = repo_path.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo);
+            anyhow::bail!("Invalid GitHub repo format: {}", repo_path);
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
@@ -266,9 +315,13 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let project_path = project
-            .or(self.default_project.as_deref())
-            .context("GitLab MR requires project path")?;
+        let project_path = match project {
+            Some(p) => p,
+            None => match &self.default_project {
+                ProjectDetection::GitLab(p) => p.as_str(),
+                _ => anyhow::bail!("GitLab MR requires project path"),
+            },
+        };
 
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)
@@ -328,16 +381,29 @@ impl StatusChecker {
         };
 
         // Get current branch name to find the MR
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .context("Failed to get current git branch")?;
+        let repo = match gix::discover(".") {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::warn!(error=%e, "not in a valid git repository");
+                return Ok(Vec::new());
+            }
+        };
 
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
+        let head = match repo.head() {
+            Ok(head) => head,
+            Err(e) => {
+                tracing::warn!(error=%e, "failed to get HEAD reference");
+                return Ok(Vec::new());
+            }
+        };
 
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let branch = match head.referent_name() {
+            Some(name) => name.shorten().to_string(),
+            None => {
+                tracing::warn!("HEAD is detached, not on a branch");
+                return Ok(Vec::new());
+            }
+        };
 
         // Find MR for this branch
         let endpoint = merge_requests::MergeRequests::builder()

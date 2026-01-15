@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ enum OutputFormat {
 #[derive(Parser)]
 #[command(name = "todo-curator")]
 #[command(about = "Check TODO comments against issue/MR status", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -39,9 +41,6 @@ enum Commands {
     CheckMrTodos {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
-
-        #[arg(long)]
-        project: Option<String>,
 
         #[arg(long, value_enum, default_value = "text", help = "Output format")]
         format: OutputFormat,
@@ -79,10 +78,9 @@ async fn main() -> Result<()> {
         }
         Commands::CheckMrTodos {
             path,
-            project,
             format,
             output: output_path,
-        } => check_mr_todos(path, project, format, output_path).await,
+        } => check_mr_todos(path, format, output_path).await,
     }
 }
 
@@ -102,6 +100,19 @@ fn print_output<W: Write>(
         }
     }
     Ok(())
+}
+
+/// JSON output format for MR TODO check results
+#[derive(Debug, Serialize, Deserialize)]
+struct MrTodosOutput {
+    issues_closing: Vec<MrIssue>,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MrIssue {
+    issue_number: u32,
+    references: Vec<todo_curator::todo::TodoReference>,
 }
 
 fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<()> {
@@ -167,8 +178,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
 
 async fn check_mr_todos(
     path: PathBuf,
-    project: Option<String>,
-    _format: OutputFormat,
+    format: OutputFormat,
     output_path: Option<PathBuf>,
 ) -> Result<()> {
     let mut output: Box<dyn Write> = if let Some(path) = output_path {
@@ -180,30 +190,27 @@ async fn check_mr_todos(
 
     checker.check_auth()?;
 
-    let project = project
-        .or_else(|| std::env::var("GITLAB_PROJECT").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "GitLab project path required. Set --project flag or GITLAB_PROJECT environment variable.\n\
+    // Determine project using ProjectDetection logic
+    let project = match todo_curator::checker::StatusChecker::detect_project(&path) {
+        todo_curator::checker::ProjectDetection::GitLab(proj) => proj,
+        todo_curator::checker::ProjectDetection::GitHub(_) => {
+            unimplemented!("GitHub PR TODO checking not yet implemented")
+        }
+        todo_curator::checker::ProjectDetection::None => {
+            anyhow::bail!(
+                "Could not detect project. Set CI_PROJECT_PATH or GITLAB_PROJECT environment variable.\n\
                 Example: --project group/subgroup/repo"
             )
-        })?;
+        }
+    };
 
     let issues = checker.get_current_mr_issues(&project).await?;
-
-    if issues.is_empty() {
-        writeln!(
-            output,
-            "Not on an MR or no issues will be closed by current MR"
-        )?;
-        return Ok(());
-    }
 
     let extractor = todo_curator::todo::TodoExtractor::new();
     let all_references = extractor.extract_from_directory(&path)?;
 
-    let mut found_todos = false;
-
+    // Collect matching references for each issue
+    let mut mr_issues = Vec::new();
     for issue_num in issues {
         let matching_refs: Vec<_> = all_references
             .iter()
@@ -215,10 +222,40 @@ async fn check_mr_todos(
                 } => *number == issue_num,
                 _ => false,
             })
+            .cloned()
             .collect();
 
         if !matching_refs.is_empty() {
-            if !found_todos {
+            mr_issues.push(MrIssue {
+                issue_number: issue_num,
+                references: matching_refs,
+            });
+        }
+    }
+
+    let mr_output = MrTodosOutput {
+        issues_closing: mr_issues.clone(),
+        status: if mr_issues.is_empty() {
+            "success".to_string()
+        } else {
+            "failure".to_string()
+        },
+    };
+
+    // Output based on format
+    match format {
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&mr_output)?;
+            writeln!(output, "{}", json)?;
+        }
+        OutputFormat::Text => {
+            if mr_issues.is_empty() {
+                writeln!(
+                    output,
+                    "{}",
+                    "No TODOs reference issues closed by this MR.".green()
+                )?;
+            } else {
                 writeln!(
                     output,
                     "{}",
@@ -226,25 +263,21 @@ async fn check_mr_todos(
                         .yellow()
                         .bold()
                 )?;
-                found_todos = true;
+                for mr_issue in &mr_issues {
+                    writeln!(
+                        output,
+                        "{}: {} reference(s) found",
+                        format!("#{}", mr_issue.issue_number).yellow(),
+                        mr_issue.references.len()
+                    )?;
+                }
             }
-            writeln!(
-                output,
-                "{}: {} reference(s) found",
-                format!("#{}", issue_num).yellow(),
-                matching_refs.len()
-            )?;
         }
     }
 
-    if found_todos {
+    if !mr_issues.is_empty() {
         process::exit(1);
     }
 
-    writeln!(
-        output,
-        "{}",
-        "No TODOs reference issues closed by this MR.".green()
-    )?;
     Ok(())
 }
