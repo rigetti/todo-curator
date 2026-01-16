@@ -39,6 +39,13 @@ pub enum TodoReference {
         file_path: String,
         line_number: u64,
     },
+    GitLabEpic {
+        group: Option<String>,
+        number: u32,
+        source_line: String,
+        file_path: String,
+        line_number: u64,
+    },
 }
 
 impl TodoReference {
@@ -73,6 +80,16 @@ impl TodoReference {
                 ..
             } => format!("{}!{}", p, number),
             TodoReference::GitHubPr { repo, number, .. } => format!("{}#{}", repo, number),
+            TodoReference::GitLabEpic {
+                group: None,
+                number,
+                ..
+            } => format!("&{}", number),
+            TodoReference::GitLabEpic {
+                group: Some(g),
+                number,
+                ..
+            } => format!("{}&{}", g, number),
         }
     }
 
@@ -82,6 +99,7 @@ impl TodoReference {
             TodoReference::GitHubIssue { source_line, .. } => source_line,
             TodoReference::GitLabMr { source_line, .. } => source_line,
             TodoReference::GitHubPr { source_line, .. } => source_line,
+            TodoReference::GitLabEpic { source_line, .. } => source_line,
         }
     }
 
@@ -91,6 +109,7 @@ impl TodoReference {
             TodoReference::GitHubIssue { file_path, .. } => file_path,
             TodoReference::GitLabMr { file_path, .. } => file_path,
             TodoReference::GitHubPr { file_path, .. } => file_path,
+            TodoReference::GitLabEpic { file_path, .. } => file_path,
         }
     }
 
@@ -100,6 +119,7 @@ impl TodoReference {
             TodoReference::GitHubIssue { line_number, .. } => *line_number,
             TodoReference::GitLabMr { line_number, .. } => *line_number,
             TodoReference::GitHubPr { line_number, .. } => *line_number,
+            TodoReference::GitLabEpic { line_number, .. } => *line_number,
         }
     }
 }
@@ -333,6 +353,76 @@ impl TodoExtractor {
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::GitHubPr {
                             repo,
+                            number,
+                            source_line: line.trim().to_string(),
+                            file_path: file_path.to_string(),
+                            line_number,
+                        })
+                    },
+                ),
+            ),
+            // Local GitLab epics: TODO &123
+            (
+                Regex::new(r"\bTODO:? &(\d+)").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        caps.get(1)
+                            .and_then(|m| m.as_str().parse::<u32>().ok())
+                            .map(|num| TodoReference::GitLabEpic {
+                                group: None,
+                                number: num,
+                                source_line: line.trim().to_string(),
+                                file_path: file_path.to_string(),
+                                line_number,
+                            })
+                    },
+                ),
+            ),
+            // GitLab epics with full URLs: https://gitlab.com/groups/group/.../path/-/epics/123
+            (
+                Regex::new(r"TODO:? https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
+                    .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::GitLabEpic {
+                            group: Some(group),
+                            number,
+                            source_line: line.trim().to_string(),
+                            file_path: file_path.to_string(),
+                            line_number,
+                        })
+                    },
+                ),
+            ),
+            // GitLab epics without schema: gitlab.com/groups/group/.../path/-/epics/123
+            (
+                Regex::new(r"TODO:? gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
+                    .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::GitLabEpic {
+                            group: Some(group),
+                            number,
+                            source_line: line.trim().to_string(),
+                            file_path: file_path.to_string(),
+                            line_number,
+                        })
+                    },
+                ),
+            ),
+            // GitLab epics in rendered format: group/subgroup/path&123
+            (
+                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::GitLabEpic {
+                            group: Some(group),
                             number,
                             source_line: line.trim().to_string(),
                             file_path: file_path.to_string(),
