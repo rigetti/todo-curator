@@ -431,22 +431,34 @@ impl StatusChecker {
             .await
             .context("Failed to query GitLab epic")?;
 
+        // Check response status
+        let status = response.status();
+        
         // Parse the response body
         let body = response.into_body();
         let epic: serde_json::Value = serde_json::from_slice(&body)
             .context("Failed to parse GitLab epic response")?;
 
+        tracing::debug!("GitLab epic response (status {}): {:?}", status, epic);
+
+        // Check if the response contains an error message (404, 403, etc.)
+        if let Some(message) = epic.get("message").and_then(|v| v.as_str()) {
+            anyhow::bail!("GitLab API error: {}", message);
+        }
+
         // Parse the epic state
         let state = epic
             .get("state")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+            .ok_or_else(|| anyhow::anyhow!("Epic response missing 'state' field"))?;
         
         let title = epic
             .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or("(no title)")
             .to_string();
+
+        tracing::debug!("Epic state: {}, title: {}", state, title);
 
         // Epics can be in states: opened, closed
         if state == "closed" {
