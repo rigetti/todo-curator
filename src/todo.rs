@@ -398,8 +398,7 @@ impl TodoExtractor {
             ),
             // GitLab epics without schema: gitlab.com/groups/group/.../path/-/epics/123
             (
-                Regex::new(r"TODO:? gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
-                    .unwrap(),
+                Regex::new(r"TODO:? gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();

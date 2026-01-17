@@ -403,7 +403,10 @@ impl StatusChecker {
                         if parts.len() > 1 {
                             parts[..parts.len() - 1].join("/")
                         } else {
-                            anyhow::bail!("Cannot determine group from project path: {}", project_path)
+                            anyhow::bail!(
+                                "Cannot determine group from project path: {}",
+                                project_path
+                            )
                         }
                     }
                     _ => anyhow::bail!("GitLab epic requires group path"),
@@ -413,31 +416,34 @@ impl StatusChecker {
 
         // Use a custom endpoint to query the GitLab epics API
         // The endpoint is: GET /groups/:id/epics/:epic_iid
-        let endpoint = format!("groups/{}/epics/{}", 
-            urlencoding::encode(&group_path), 
+        let endpoint = format!(
+            "groups/{}/epics/{}",
+            urlencoding::encode(&group_path),
             number
         );
 
         // Build HTTP request manually
         use gitlab::api::{AsyncClient, RestClient};
-        let url = client.rest_endpoint(&endpoint)
+        let url = client
+            .rest_endpoint(&endpoint)
             .context("Failed to build epic endpoint URL")?;
-        
+
         let request = http::Request::builder()
             .method(http::Method::GET)
             .uri(url.as_str());
 
-        let response = client.rest_async(request, vec![])
+        let response = client
+            .rest_async(request, vec![])
             .await
             .context("Failed to query GitLab epic")?;
 
         // Check response status
         let status = response.status();
-        
+
         // Parse the response body
         let body = response.into_body();
-        let epic: serde_json::Value = serde_json::from_slice(&body)
-            .context("Failed to parse GitLab epic response")?;
+        let epic: serde_json::Value =
+            serde_json::from_slice(&body).context("Failed to parse GitLab epic response")?;
 
         tracing::debug!("GitLab epic response (status {}): {:?}", status, epic);
 
@@ -451,7 +457,7 @@ impl StatusChecker {
             .get("state")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Epic response missing 'state' field"))?;
-        
+
         let title = epic
             .get("title")
             .and_then(|v| v.as_str())

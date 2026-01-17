@@ -122,7 +122,7 @@ fn test_epic_extraction() {
 
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_epic_extraction.rs");
-    
+
     // Create a test file with various epic formats
     let content = r#"
 // TODO &17 - local epic reference
@@ -130,34 +130,43 @@ fn test_epic_extraction() {
 // TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/123 - full URL
 // TODO gitlab.com/groups/rigetti/qcs/services/-/epics/456 - URL without schema
 "#;
-    
+
     fs::write(&test_file, content).expect("Failed to write test file");
-    
+
     let extractor = TodoExtractor::new();
-    let references = extractor.extract_from_directory(&temp_dir)
+    let references = extractor
+        .extract_from_directory(&temp_dir)
         .expect("Failed to extract references");
-    
+
     // Clean up
     let _ = fs::remove_file(&test_file);
-    
+
     // Filter to only epic references from our test file
-    let epic_refs: Vec<_> = references.iter()
+    let epic_refs: Vec<_> = references
+        .iter()
         .filter(|r| matches!(r, TodoReference::GitLabEpic { .. }))
         .collect();
-    
+
     // Should find all 4 epic references
     assert!(
         epic_refs.len() >= 4,
         "Should extract at least 4 epic references. Found: {}",
         epic_refs.len()
     );
-    
+
     // Verify local epic reference
     let has_local = epic_refs.iter().any(|r| {
-        matches!(r, TodoReference::GitLabEpic { group: None, number: 17, .. })
+        matches!(
+            r,
+            TodoReference::GitLabEpic {
+                group: None,
+                number: 17,
+                ..
+            }
+        )
     });
     assert!(has_local, "Should find local epic &17");
-    
+
     // Verify epic with group path
     let has_group_path = epic_refs.iter().any(|r| {
         matches!(
@@ -167,7 +176,7 @@ fn test_epic_extraction() {
         )
     });
     assert!(has_group_path, "Should find epic rigetti/qcs/services&42");
-    
+
     // Verify full URL epic
     let has_full_url = epic_refs.iter().any(|r| {
         matches!(
@@ -177,7 +186,7 @@ fn test_epic_extraction() {
         )
     });
     assert!(has_full_url, "Should find epic from full URL");
-    
+
     // Verify URL without schema
     let has_no_schema = epic_refs.iter().any(|r| {
         matches!(

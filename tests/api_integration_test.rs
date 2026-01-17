@@ -406,11 +406,8 @@ async fn test_closed_gitlab_epic() {
     // Note: You'll need to replace this with an actual closed epic from your GitLab instance
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_gitlab_epic.rs");
-    std::fs::write(
-        &test_file,
-        "// TODO rigetti/qcs/services&17\n",
-    )
-    .expect("Failed to write test file");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&17\n")
+        .expect("Failed to write test file");
 
     // Call check_closed_references directly
     let result = check_closed_references(test_file.clone())
@@ -450,11 +447,8 @@ async fn test_open_gitlab_epic() {
     // Note: You'll need to replace this with an actual open epic from your GitLab instance
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_open_gitlab_epic.rs");
-    std::fs::write(
-        &test_file,
-        "// TODO rigetti/qcs/services&1\n",
-    )
-    .expect("Failed to write test file");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&1\n")
+        .expect("Failed to write test file");
 
     // Call check_closed_references directly
     let result = check_closed_references(test_file.clone())
@@ -492,7 +486,7 @@ async fn test_gitlab_epic_full_url() {
     // Create a dedicated temporary directory for this test
     let test_dir = std::env::temp_dir().join("test_gitlab_epic_full_url");
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
-    
+
     let test_file = test_dir.join("test.rs");
     std::fs::write(
         &test_file,
@@ -538,13 +532,10 @@ async fn test_nonexistent_gitlab_epic() {
     // Create a dedicated temporary directory for this test
     let test_dir = std::env::temp_dir().join("test_nonexistent_gitlab_epic");
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
-    
+
     let test_file = test_dir.join("test.rs");
-    std::fs::write(
-        &test_file,
-        "// TODO rigetti/qcs/services&999999\n",
-    )
-    .expect("Failed to write test file");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999\n")
+        .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
     let result = check_closed_references(test_dir.clone())
