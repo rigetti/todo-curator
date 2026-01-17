@@ -95,6 +95,7 @@ cli:build:
       # once a prerelease has been made, ensure artifacts are attached
       interruptible: false
     - when: manual
+      allow_failure: true
   parallel:
     matrix:
       - CLI_BUILD_IMAGE: macos-15-xcode-16
