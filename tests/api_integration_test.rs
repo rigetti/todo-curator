@@ -393,3 +393,206 @@ async fn test_mixed_issue_states() {
         "Status should be failure when problems are found"
     );
 }
+
+/// Test that the tool correctly identifies a closed GitLab epic
+/// Uses epic #16 in rigetti/qcs/services which is closed
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_closed_gitlab_epic() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    // Create a dedicated temporary directory for this test
+    let test_dir = std::env::temp_dir().join("test_closed_gitlab_epic");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+
+    let test_file = test_dir.join("test.rs");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&16\n")
+        .expect("Failed to write test file");
+
+    // Call check_closed_references with the directory path
+    let result = check_closed_references(test_dir.clone())
+        .await
+        .expect("Failed to check closed references");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    // Epic #16 is closed, so it should be reported
+    assert!(
+        !result.closed.is_empty(),
+        "Closed epic should be reported. Got: {:?}",
+        result
+    );
+
+    assert_eq!(
+        result.closed.len(),
+        1,
+        "Should have exactly one closed epic"
+    );
+
+    let closed_epic = &result.closed[0];
+    match &closed_epic.reference {
+        TodoReference::GitLabEpic { group, number, .. } => {
+            assert_eq!(
+                group.as_deref(),
+                Some("rigetti/qcs/services"),
+                "Should be rigetti/qcs/services group"
+            );
+            assert_eq!(number, &16, "Should be epic #16");
+        }
+        _ => panic!("Expected GitLabEpic, got: {:?}", closed_epic.reference),
+    }
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for closed epic"
+    );
+}
+
+/// Test that the tool correctly identifies an open GitLab epic
+/// Uses epic #25 in rigetti/qcs/services which is open
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_open_gitlab_epic() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    // Create a dedicated temporary directory for this test
+    let test_dir = std::env::temp_dir().join("test_open_gitlab_epic");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+
+    let test_file = test_dir.join("test.rs");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&25\n")
+        .expect("Failed to write test file");
+
+    // Call check_closed_references with the directory path
+    let result = check_closed_references(test_dir.clone())
+        .await
+        .expect("Failed to check closed references");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    // Epic #25 is open, so it should NOT appear in closed epics
+    assert!(
+        result.closed.is_empty(),
+        "Open epic should not be reported as closed. Got: {:?}",
+        result.closed
+    );
+
+    assert!(
+        result.not_found.is_empty(),
+        "Open epic should not be reported as not found. Got: {:?}",
+        result.not_found
+    );
+
+    assert_eq!(
+        result.status, "success",
+        "Status should be success for open epic"
+    );
+}
+
+/// Test that the tool correctly handles epic references with full URLs
+/// Uses epic #16 in rigetti/qcs/services which is closed
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_gitlab_epic_full_url() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    // Create a dedicated temporary directory for this test
+    let test_dir = std::env::temp_dir().join("test_gitlab_epic_full_url");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+
+    let test_file = test_dir.join("test.rs");
+    std::fs::write(
+        &test_file,
+        "// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/16\n",
+    )
+    .expect("Failed to write test file");
+
+    // Call check_closed_references with the directory path
+    let result = check_closed_references(test_dir.clone())
+        .await
+        .expect("Failed to check closed references");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    // Epic #16 is closed, so it should be reported
+    assert!(
+        !result.closed.is_empty(),
+        "Closed epic should be reported. Got: {:?}",
+        result
+    );
+
+    let closed_epic = &result.closed[0];
+    match &closed_epic.reference {
+        TodoReference::GitLabEpic { group, number, .. } => {
+            assert_eq!(
+                group.as_deref(),
+                Some("rigetti/qcs/services"),
+                "Should be rigetti/qcs/services group"
+            );
+            assert_eq!(number, &16, "Should be epic #16");
+        }
+        _ => panic!("Expected GitLabEpic, got: {:?}", closed_epic.reference),
+    }
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for closed epic"
+    );
+}
+
+/// Test that the tool correctly reports non-existent GitLab epics
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_nonexistent_gitlab_epic() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    // Create a dedicated temporary directory for this test
+    let test_dir = std::env::temp_dir().join("test_nonexistent_gitlab_epic");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+
+    let test_file = test_dir.join("test.rs");
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999\n")
+        .expect("Failed to write test file");
+
+    // Call check_closed_references with the directory path
+    let result = check_closed_references(test_dir.clone())
+        .await
+        .expect("Failed to check closed references");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    // Should report the non-existent epic
+    assert!(
+        !result.not_found.is_empty(),
+        "Non-existent epic should be reported. Got: {:?}",
+        result
+    );
+
+    // Verify the specific epic is rigetti/qcs/services&999999
+    let not_found_epic = result.not_found.iter().find(|n| {
+        matches!(
+            &n.reference,
+            TodoReference::GitLabEpic { group, number, .. }
+            if group.as_deref() == Some("rigetti/qcs/services") && *number == 999999
+        )
+    });
+
+    assert!(
+        not_found_epic.is_some(),
+        "Should find non-existent epic in not_found list. Got: {:?}",
+        result.not_found
+    );
+
+    assert_eq!(
+        result.status, "failure",
+        "Status should be failure for non-existent epic"
+    );
+}

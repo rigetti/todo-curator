@@ -220,6 +220,10 @@ impl StatusChecker {
             TodoReference::GitHubPr { repo, number, .. } => {
                 self.check_github_pr(reference, repo, *number).await
             }
+            TodoReference::GitLabEpic { group, number, .. } => {
+                self.check_gitlab_epic(reference, group.as_deref(), *number)
+                    .await
+            }
         }
     }
 
@@ -369,6 +373,104 @@ impl StatusChecker {
             Ok(Some(ClosedReference {
                 reference: reference.clone(),
                 title: pr.title.unwrap_or_else(|| "(no title)".to_string()),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn check_gitlab_epic(
+        &self,
+        reference: &TodoReference,
+        group: Option<&str>,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(None);
+        };
+
+        // Determine the group path - for epics, we need to extract the group from the project path
+        let group_path = match group {
+            Some(g) => g.to_string(),
+            None => {
+                // For local epic references, we need to extract the group from the default project
+                match &self.default_project {
+                    ProjectDetection::GitLab(project_path) => {
+                        // Extract group from project path (e.g., "rigetti/qcs/services/myproject" -> "rigetti/qcs/services")
+                        // Epics belong to groups, not projects, so we need to find the parent group
+                        // For now, we'll try the full path minus the last component
+                        let parts: Vec<&str> = project_path.split('/').collect();
+                        if parts.len() > 1 {
+                            parts[..parts.len() - 1].join("/")
+                        } else {
+                            anyhow::bail!(
+                                "Cannot determine group from project path: {}",
+                                project_path
+                            )
+                        }
+                    }
+                    _ => anyhow::bail!("GitLab epic requires group path"),
+                }
+            }
+        };
+
+        // Use a custom endpoint to query the GitLab epics API
+        // The endpoint is: GET /groups/:id/epics/:epic_iid
+        let endpoint = format!(
+            "groups/{}/epics/{}",
+            urlencoding::encode(&group_path),
+            number
+        );
+
+        // Build HTTP request manually
+        use gitlab::api::{AsyncClient, RestClient};
+        let url = client
+            .rest_endpoint(&endpoint)
+            .context("Failed to build epic endpoint URL")?;
+
+        let request = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(url.as_str());
+
+        let response = client
+            .rest_async(request, vec![])
+            .await
+            .context("Failed to query GitLab epic")?;
+
+        // Check response status
+        let status = response.status();
+
+        // Parse the response body
+        let body = response.into_body();
+        let epic: serde_json::Value =
+            serde_json::from_slice(&body).context("Failed to parse GitLab epic response")?;
+
+        tracing::debug!("GitLab epic response (status {}): {:?}", status, epic);
+
+        // Check if the response contains an error message (404, 403, etc.)
+        if let Some(message) = epic.get("message").and_then(|v| v.as_str()) {
+            anyhow::bail!("GitLab API error: {}", message);
+        }
+
+        // Parse the epic state
+        let state = epic
+            .get("state")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Epic response missing 'state' field"))?;
+
+        let title = epic
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no title)")
+            .to_string();
+
+        tracing::debug!("Epic state: {}, title: {}", state, title);
+
+        // Epics can be in states: opened, closed
+        if state == "closed" {
+            Ok(Some(ClosedReference {
+                reference: reference.clone(),
+                title,
             }))
         } else {
             Ok(None)
