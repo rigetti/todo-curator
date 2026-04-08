@@ -448,11 +448,8 @@ impl TodoExtractor {
 
         // Use ignore crate to walk directory respecting .gitignore
         let walker = WalkBuilder::new(dir)
-            .hidden(false) // Don't skip hidden files by default
-            .git_ignore(true) // Respect .gitignore
-            .git_exclude(true) // Respect .git/info/exclude
-            .git_global(true) // Use global gitignore rules
-            .standard_filters(true) // Enable standard filters (skips .git directories)
+            .standard_filters(true) // Enable standard filters
+            .add(".gitlab-ci.yml")
             .build();
 
         for result in walker {
