@@ -106,7 +106,7 @@ unused_must_use = "deny"
 # Individual lints we'd like to enforce but which the codebase currently violates.
 absolute_paths_not_starting_with_crate = "warn"
 anonymous_parameters = "warn"
-bad_style = "warn"
+bad_style = { level = "warn", priority = -1 }
 dead_code = "warn"
 macro_use_extern_crate = "warn"
 meta_variable_misuse = "warn"

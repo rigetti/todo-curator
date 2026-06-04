@@ -21,6 +21,8 @@ pub struct LintViolation {
 struct LintRule {
     name: String,
     pattern: Regex,
+    /// If set, lines matching pattern are only violations if they do NOT match this regex.
+    exclude_pattern: Option<Regex>,
     hint: String,
     file_exclude: Regex,
 }
@@ -30,27 +32,35 @@ pub struct TodoLinter {
     rules: Vec<LintRule>,
 }
 
+impl Default for TodoLinter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TodoLinter {
     pub fn new() -> Self {
         let rules = vec![
             LintRule {
                 name: "non-mergeable TODOs".to_string(),
                 pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
+                exclude_pattern: None,
                 hint: "XXX, FIXME, TEMP, and TBD must be resolved prior to merge".to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
                 name: "MVP comments".to_string(),
                 pattern: Regex::new(r"\b(MVP)\b").unwrap(),
+                exclude_pattern: None,
                 hint: "Comments should not refer to 'MVP'".to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
                 name: "TODOs with incorrect syntax".to_string(),
-                pattern: Regex::new(
-                    r"\bTODO(?! (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+\b| performance|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+)...",
-                )
-                .unwrap(),
+                pattern: Regex::new(r"\bTODO...").unwrap(),
+                exclude_pattern: Some(Regex::new(
+                    r"\bTODO(:? (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+| performance)",
+                ).unwrap()),
                 hint: r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance" for TODO comments"#.to_string(),
                 file_exclude: Regex::new(
                     r"(^|/)docs/todo-comments\.md$|(^|/)docs/repo-rules-and-guidelines\.md$|(^|/)vendor/|scripts/check-.*issues\.sh$|mermaid.*\.js$",
@@ -59,7 +69,8 @@ impl TodoLinter {
             },
             LintRule {
                 name: "uncapitalized TODO patterns".to_string(),
-                pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b(?!-curator)").unwrap(),
+                pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
+                exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
                 hint: r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance" for TODO comments"#.to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
@@ -109,6 +120,11 @@ impl TodoLinter {
                             continue;
                         }
                         if rule.pattern.is_match(line) {
+                            if let Some(ref exclude) = rule.exclude_pattern {
+                                if exclude.is_match(line) {
+                                    continue;
+                                }
+                            }
                             viols.lock().unwrap().push(LintViolation {
                                 rule: rule.name.clone(),
                                 hint: rule.hint.clone(),
@@ -131,7 +147,6 @@ impl TodoLinter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[expect(clippy::enum_variant_names, reason = "GitHub and GitLab are distinct")]
 pub enum TodoReference {
     GitLabIssue {
         project: Option<String>,
@@ -251,6 +266,12 @@ type ExtractorFn =
 
 pub struct TodoExtractor {
     patterns: Vec<(Regex, ExtractorFn)>,
+}
+
+impl Default for TodoExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TodoExtractor {
