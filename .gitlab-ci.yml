@@ -1,58 +1,50 @@
-stages:
-  - test
-  - release
-  - cli
+include:
+  - project: "rigetti/qcs/utilities/qcs-infrastructure"
+    ref: v0.1.1
+    file:
+      - gitlab-ci/common.yaml
+      - gitlab-ci/git.yaml
+      - gitlab-ci/gitlab.yaml
+      - gitlab-ci/knope.yaml
+      - gitlab-ci/qcs.yaml
+      - gitlab-ci/rust.yaml
+      - gitlab-ci/lints.yaml
+
+default:
+  !reference [.standard_defaults]
 
 workflow:
   rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      auto_cancel:
-        on_new_commit: interruptible
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "web"
+    - !reference [.workflow_rules_default]
 
-include:
-  - project: "rigetti/qcs/utilities/qcs-ci-toolkit"
-    file:
-      - "gitlab-ci/gitlab/defaults.yaml"
-      - "gitlab-ci/knope/lib.yaml"
-  - project: "rigetti/qcs/utilities/rust-ci-image"
-    file: "defaults/ci.yaml"
-
-default:
-  image: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
-  tags:
-    - default
-  interruptible: true
-  retry: !reference [.default_retry_policy]
-
-check:
-  extends: [.cargo_check]
-  stage: test
-  variables:
-    KUBERNETES_CPU_REQUEST: 2
+variables:
+  QCS_INFRASTRUCTURE_REF: v0.1.1
+  RUST_CI_IMAGE_TAG: $QCS_INFRASTRUCTURE_REF
+  CLI_TOOLS_IMAGE_TAG: $QCS_INFRASTRUCTURE_REF
 
 clippy:
   extends: [.cargo_clippy]
-  stage: test
 
 fmt:
-  extends: [.rust_stable_sccache]
-  stage: test
-  script:
-    - cargo fmt --check
+  extends: [.cargo_fmt]
 
 test:
   extends: [.cargo_nextest]
-  stage: test
+  # We don't need to use --all-features here, because the integration tests are in other jobs.
   script:
-    - cargo test
+    cargo nextest run
+
+# We don't use the relint or forbid-direct-deps CI jobs because this is just a utility.
+# We don't use the TODO-checking jobs because we'd need to ignore any source-code files with the forbidden patterns as regex or test strings.
+
+Dry run Knope release:
+  extends: [.knope_dry_run]
+
+Knope release:
+  extends: [.knope_release]
 
 test-api-integration-github:
   extends: [.rust_stable_sccache]
-  stage: test
   script:
     - cargo test --test api_integration_test --features test-integration-github --no-fail-fast
   variables:
@@ -60,7 +52,6 @@ test-api-integration-github:
 
 test-api-integration-gitlab:
   extends: [.rust_stable_sccache]
-  stage: test
   script:
     - cargo test --test api_integration_test --features test-integration-gitlab --no-fail-fast
   variables:
@@ -68,31 +59,16 @@ test-api-integration-gitlab:
 
 test-api-integration-combined:
   extends: [.rust_stable_sccache]
-  stage: test
   script:
     - cargo test --test api_integration_test --features test-integration-github,test-integration-gitlab --no-fail-fast
   variables:
     GH_TOKEN: $GITHUB_TOKEN
     GITLAB_TOKEN: $GL_TOKEN
 
-Dry run Knope release:
-  extends: [.knope_dry_run]
-  needs: []
-  stage: release
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-
-Knope release:
-  extends: [.knope_release]
-  needs: []
-  stage: release
-
 cli:build:
-  stage: cli
   needs: []
   rules:
     - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare release/"
-      # once a prerelease has been made, ensure artifacts are attached
       interruptible: false
     - when: manual
       allow_failure: true
@@ -100,13 +76,10 @@ cli:build:
     matrix:
       - CLI_BUILD_IMAGE: macos-15-xcode-16
         CLI_BUILD_RUNNER_TAG: saas-macos-large-m2pro
-      - CLI_BUILD_IMAGE: registry.gitlab.com/rigetti/qcs/utilities/rust-ci-image:latest
+      - CLI_BUILD_IMAGE: $RUST_CI_IMAGE:$RUST_CI_IMAGE_TAG
         CLI_BUILD_RUNNER_TAG: flexible
         KUBERNETES_CPU_REQUEST: 14
         KUBERNETES_MEMORY_LIMIT: 20Gi
-      # Uncomment if we ever actually need a Windows version of the tool
-      # - CLI_BUILD_IMAGE: windows-latest
-      #   CLI_BUILD_RUNNER_TAG: saas-windows-medium-amd64
   tags: [$CLI_BUILD_RUNNER_TAG]
   image: $CLI_BUILD_IMAGE
   script:
@@ -116,9 +89,8 @@ cli:build:
       - release/
 
 cli:release:
-  stage: cli
   needs: [cli:build]
-  # once a prerelease has been made, ensure artifacts are attached
+  image: $CLI_TOOLS_IMAGE:$CLI_TOOLS_IMAGE_TAG
   interruptible: false
   rules:
     - if: "$CI_COMMIT_MESSAGE =~ /^chore: prepare (pre)?release/"

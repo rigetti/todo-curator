@@ -223,3 +223,231 @@ fn test_directory_scanning() {
         stderr
     );
 }
+
+/// Test that the linter catches forbidden TODO patterns
+#[test]
+fn test_lint_forbidden_patterns() {
+    use std::fs;
+    use todo_curator::todo::{LintCategory, TodoLinter};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_forbidden");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// XXX this is bad
+// FIXME something broken
+// TEMP hack
+// TBD figure this out
+// MVP feature
+// TODO without a ticket reference
+// TODO: also bad, colon but no ticket
+// todo lowercase is bad
+// fixme lowercase
+# tbd in a shell comment
+"#;
+
+    fs::write(temp_dir.join("bad.rs"), content).unwrap();
+
+    let linter = TodoLinter::new();
+    let violations = linter.lint_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    // Should catch XXX, FIXME, TEMP, TBD (non-mergeable)
+    let non_mergeable = violations.get(&LintCategory::NonMergeable);
+    assert!(
+        non_mergeable.map_or(false, |v| v.len() >= 4),
+        "Should catch XXX, FIXME, TEMP, TBD. Found: {:?}",
+        non_mergeable
+    );
+
+    // Should catch MVP
+    let mvp = violations.get(&LintCategory::MvpComment);
+    assert!(
+        mvp.map_or(false, |v| !v.is_empty()),
+        "Should catch MVP comment"
+    );
+
+    // Should catch TODOs with incorrect syntax
+    let bad_syntax = violations.get(&LintCategory::IncorrectSyntax);
+    assert!(
+        bad_syntax.map_or(false, |v| v.len() >= 2),
+        "Should catch TODO without ticket and TODO: without ticket. Found: {:?}",
+        bad_syntax
+    );
+
+    // Should catch uncapitalized patterns
+    let uncap = violations.get(&LintCategory::Uncapitalized);
+    assert!(
+        uncap.map_or(false, |v| v.len() >= 3),
+        "Should catch todo, fixme, tbd lowercase. Found: {:?}",
+        uncap
+    );
+}
+
+/// Test that valid TODO patterns are NOT flagged by the linter
+#[test]
+fn test_lint_valid_patterns() {
+    use std::fs;
+    use todo_curator::todo::TodoLinter;
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_valid");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO #123
+// TODO rigetti/qcs/magneto#229
+// TODO github.com/owner/repo#456
+// TODO !789
+// TODO rigetti/qcs/magneto!100
+// TODO &17
+// TODO rigetti/qcs/services&42
+// TODO performance - allowed exception
+// TODO(#123) parenthesized local issue
+// TODO(rigetti/qcs/magneto#229) parenthesized GitLab issue
+// TODO(github.com/owner/repo#456) parenthesized GitHub issue
+// TODO(!789) parenthesized MR
+// TODO(&17) parenthesized epic
+// using todo-curator in a comment is fine
+"#;
+
+    fs::write(temp_dir.join("good.rs"), content).unwrap();
+
+    let linter = TodoLinter::new();
+    let violations = linter.lint_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    // Filter out violations that come from the "todo-curator" line (should be excluded)
+    // All lines should pass - no violations expected
+    assert!(
+        violations.is_empty(),
+        "Valid TODO patterns should not produce lint violations. Got: {:#?}",
+        violations
+    );
+}
+
+/// Test that TODO(<ref>) form is correctly extracted as references
+#[test]
+fn test_parenthesized_todo_extraction() {
+    use std::fs;
+    use todo_curator::todo::{TodoExtractor, TodoReference};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_paren_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO(#100) local GitLab issue
+// TODO(rigetti/qcs/magneto#200) cross-project GitLab issue
+// TODO(github.com/owner/repo#300) GitHub issue
+// TODO(!400) local MR
+// TODO(rigetti/qcs/magneto!500) cross-project MR
+// TODO(&600) local epic
+// TODO(rigetti/qcs/services&700) epic with group
+"#;
+
+    fs::write(temp_dir.join("parens.rs"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let references = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    // Filter to references from our test file
+    let refs: Vec<_> = references
+        .iter()
+        .filter(|r| r.file_path().contains("parens.rs"))
+        .collect();
+
+    // Local GitLab issue
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue {
+                project: None,
+                number: 100,
+                ..
+            }
+        )),
+        "Should extract TODO(#100). Got: {:#?}",
+        refs
+    );
+
+    // Cross-project GitLab issue
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 200, .. }
+            if p == "rigetti/qcs/magneto"
+        )),
+        "Should extract TODO(rigetti/qcs/magneto#200). Got: {:#?}",
+        refs
+    );
+
+    // GitHub issue
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitHubIssue { repo: Some(repo), number: 300, .. }
+            if repo == "owner/repo"
+        )),
+        "Should extract TODO(github.com/owner/repo#300). Got: {:#?}",
+        refs
+    );
+
+    // Local MR
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabMr {
+                project: None,
+                number: 400,
+                ..
+            }
+        )),
+        "Should extract TODO(!400). Got: {:#?}",
+        refs
+    );
+
+    // Cross-project MR
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabMr { project: Some(p), number: 500, .. }
+            if p == "rigetti/qcs/magneto"
+        )),
+        "Should extract TODO(rigetti/qcs/magneto!500). Got: {:#?}",
+        refs
+    );
+
+    // Local epic
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabEpic {
+                group: None,
+                number: 600,
+                ..
+            }
+        )),
+        "Should extract TODO(&600). Got: {:#?}",
+        refs
+    );
+
+    // Epic with group
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabEpic { group: Some(g), number: 700, .. }
+            if g == "rigetti/qcs/services"
+        )),
+        "Should extract TODO(rigetti/qcs/services&700). Got: {:#?}",
+        refs
+    );
+}

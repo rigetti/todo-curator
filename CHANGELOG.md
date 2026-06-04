@@ -1,3 +1,16 @@
+## 0.1.4-dev.3 (2026-06-04)
+
+### Features
+
+- replace 'invalid TODO' relint rules
+- permit 'TODO(ref)' pattern
+- split commands up better
+
+### Fixes
+
+- nicer formatting
+- cli-release image
+
 ## 0.1.3 (2026-04-08)
 
 ### Fixes
