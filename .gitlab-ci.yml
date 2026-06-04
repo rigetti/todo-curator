@@ -31,12 +31,8 @@ fmt:
 test:
   extends: [.cargo_nextest]
 
-relint:
-  image: $RUST_CI_IMAGE:$RUST_CI_IMAGE_TAG
-  extends: [.relint]
-
-cargo_forbid_core_direct_deps:
-  extends: [.cargo_forbid_core_direct_deps]
+# We don't use the relint or forbid-direct-deps CI jobs because this is just a utility.
+# We don't use the TODO-checking jobs because we'd need to ignore any source-code files with the forbidden patterns as regex or test strings.
 
 Dry run Knope release:
   extends: [.knope_dry_run]
