@@ -175,21 +175,51 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
     }
 
     if !output.lint_violations.is_empty() {
-        writeln!(
-            writer,
-            "\n{}",
-            "Improperly-formatted TODO comments:".red().bold()
-        )?;
-        for violation in &output.lint_violations {
+        let non_mergeable: Vec<_> = output
+            .lint_violations
+            .iter()
+            .filter(|v| v.rule == "non-mergeable TODOs" || v.rule == "MVP comments")
+            .collect();
+        let bad_syntax: Vec<_> = output
+            .lint_violations
+            .iter()
+            .filter(|v| v.rule != "non-mergeable TODOs" && v.rule != "MVP comments")
+            .collect();
+
+        if !bad_syntax.is_empty() {
             writeln!(
                 writer,
-                "  {}:{}: {} [{}]",
-                violation.file_path.bold(),
-                violation.line_number.to_string().bold(),
-                violation.hint.yellow(),
-                violation.rule.dimmed(),
+                "\n{}",
+                "Improperly-formatted TODO comments:".red().bold()
             )?;
-            writeln!(writer, "    {}", violation.source_line.dimmed())?;
+            writeln!(
+                writer,
+                "  {}",
+                r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance""#
+                    .yellow()
+            )?;
+            for violation in &bad_syntax {
+                writeln!(
+                    writer,
+                    "  {}:{}",
+                    violation.file_path.bold(),
+                    violation.line_number.to_string().bold(),
+                )?;
+                writeln!(writer, "    {}", violation.source_line.dimmed())?;
+            }
+        }
+
+        if !non_mergeable.is_empty() {
+            writeln!(writer, "\n{}", "Non-mergeable TODOs:".red().bold())?;
+            for violation in &non_mergeable {
+                writeln!(
+                    writer,
+                    "  {}:{}",
+                    violation.file_path.bold(),
+                    violation.line_number.to_string().bold(),
+                )?;
+                writeln!(writer, "    {}", violation.source_line.dimmed())?;
+            }
         }
     }
 
