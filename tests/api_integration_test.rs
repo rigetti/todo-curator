@@ -451,7 +451,7 @@ async fn test_closed_gitlab_epic() {
 }
 
 /// Test that the tool correctly identifies an open GitLab epic
-/// Uses epic #25 in rigetti/qcs/services which is open
+/// Uses epic #1 in rigetti/experimental, which should be left open permanently
 #[tokio::test]
 #[cfg(feature = "test-integration-gitlab")]
 async fn test_open_gitlab_epic() {
@@ -463,7 +463,7 @@ async fn test_open_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/services&25\n")
+    std::fs::write(&test_file, "// TODO rigetti/experimental&1\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
