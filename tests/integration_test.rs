@@ -378,7 +378,11 @@ fn test_parenthesized_todo_extraction() {
     assert!(
         refs.iter().any(|r| matches!(
             r,
-            TodoReference::GitLabIssue { project: None, number: 100, .. }
+            TodoReference::GitLabIssue {
+                project: None,
+                number: 100,
+                ..
+            }
         )),
         "Should extract TODO(#100). Got: {:#?}",
         refs
@@ -410,7 +414,11 @@ fn test_parenthesized_todo_extraction() {
     assert!(
         refs.iter().any(|r| matches!(
             r,
-            TodoReference::GitLabMr { project: None, number: 400, .. }
+            TodoReference::GitLabMr {
+                project: None,
+                number: 400,
+                ..
+            }
         )),
         "Should extract TODO(!400). Got: {:#?}",
         refs
@@ -431,7 +439,11 @@ fn test_parenthesized_todo_extraction() {
     assert!(
         refs.iter().any(|r| matches!(
             r,
-            TodoReference::GitLabEpic { group: None, number: 600, .. }
+            TodoReference::GitLabEpic {
+                group: None,
+                number: 600,
+                ..
+            }
         )),
         "Should extract TODO(&600). Got: {:#?}",
         refs

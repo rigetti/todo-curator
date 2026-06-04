@@ -4,9 +4,9 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
-use todo_curator::{check_closed_references, CheckOutput};
+use todo_curator::{check_closed_references, check_invalid, CheckOutput};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
@@ -24,9 +24,34 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum Commands {
     #[command(about = "Check for TODO comments referencing closed issues or MRs")]
     CheckClosed {
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+
+        #[arg(long, value_enum, default_value = "text", help = "Output format")]
+        format: OutputFormat,
+
+        #[arg(short, long, help = "Output file (default: stdout)")]
+        output: Option<PathBuf>,
+    },
+
+    #[command(about = "Check for improperly-formatted TODO comments")]
+    CheckInvalid {
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+
+        #[arg(long, value_enum, default_value = "text", help = "Output format")]
+        format: OutputFormat,
+
+        #[arg(short, long, help = "Output file (default: stdout)")]
+        output: Option<PathBuf>,
+    },
+
+    #[command(about = "Run all checks (check-closed + check-invalid)")]
+    CheckAll {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
 
@@ -62,26 +87,74 @@ async fn main() -> Result<()> {
             output: output_path,
         } => {
             let result = check_closed_references(path).await?;
+            output_and_exit(&result, format, output_path)?;
+        }
+        Commands::CheckInvalid {
+            path,
+            format,
+            output: output_path,
+        } => {
+            let result = check_invalid(&path)?;
+            output_and_exit(&result, format, output_path)?;
+        }
+        Commands::CheckAll {
+            path,
+            format,
+            output: output_path,
+        } => {
+            let mut closed_result = check_closed_references(path.clone()).await?;
+            let invalid_result = check_invalid(&path)?;
+            closed_result.lint_violations = invalid_result.lint_violations;
 
-            if let Some(path) = output_path {
-                let mut file = File::create(path)?;
-                print_output(&mut file, &result, format)?;
+            // Also run MR check (best-effort: skip if not in MR context)
+            let mr_issues: Vec<MrIssue> = find_mr_todos(&path).await.unwrap_or_default();
+
+            if closed_result.has_errors() || !mr_issues.is_empty() {
+                closed_result.status = "failure".to_string();
+            }
+
+            if let Some(ref p) = output_path {
+                let mut file = File::create(p)?;
+                print_output(&mut file, &closed_result, format)?;
+                print_mr_text_output(&mut file, &mr_issues, format)?;
             } else {
                 let mut stdout = io::stdout();
-                print_output(&mut stdout, &result, format)?;
+                print_output(&mut stdout, &closed_result, format)?;
+                print_mr_text_output(&mut stdout, &mr_issues, format)?;
             }
 
-            if result.has_errors() {
+            if closed_result.has_errors() || !mr_issues.is_empty() {
                 process::exit(1);
             }
-            Ok(())
         }
         Commands::CheckMrTodos {
             path,
             format,
             output: output_path,
-        } => check_mr_todos(path, format, output_path).await,
+        } => {
+            check_mr_todos(path, format, output_path).await?;
+        }
     }
+    Ok(())
+}
+
+fn output_and_exit(
+    result: &CheckOutput,
+    format: OutputFormat,
+    output_path: Option<PathBuf>,
+) -> Result<()> {
+    if let Some(path) = output_path {
+        let mut file = File::create(path)?;
+        print_output(&mut file, result, format)?;
+    } else {
+        let mut stdout = io::stdout();
+        print_output(&mut stdout, result, format)?;
+    }
+
+    if result.has_errors() {
+        process::exit(1);
+    }
+    Ok(())
 }
 
 fn print_output<W: Write>(
@@ -226,30 +299,18 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
     Ok(())
 }
 
-async fn check_mr_todos(
-    path: PathBuf,
-    format: OutputFormat,
-    output_path: Option<PathBuf>,
-) -> Result<()> {
-    let mut output: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(File::create(path)?)
-    } else {
-        Box::new(io::stdout())
-    };
+async fn find_mr_todos(path: &Path) -> Result<Vec<MrIssue>> {
     let checker = todo_curator::checker::StatusChecker::new().await?;
-
     checker.check_auth()?;
 
-    // Determine project using ProjectDetection logic
-    let project = match todo_curator::checker::StatusChecker::detect_project(&path) {
+    let project = match todo_curator::checker::StatusChecker::detect_project(path) {
         todo_curator::checker::ProjectDetection::GitLab(proj) => proj,
         todo_curator::checker::ProjectDetection::GitHub(_) => {
-            unimplemented!("GitHub PR TODO checking not yet implemented")
+            anyhow::bail!("GitHub PR TODO checking not yet implemented")
         }
         todo_curator::checker::ProjectDetection::None => {
             anyhow::bail!(
-                "Could not detect project. Set CI_PROJECT_PATH or GITLAB_PROJECT environment variable.\n\
-                Example: --project group/subgroup/repo"
+                "Could not detect project. Set CI_PROJECT_PATH or GITLAB_PROJECT environment variable."
             )
         }
     };
@@ -257,9 +318,8 @@ async fn check_mr_todos(
     let issues = checker.get_current_mr_issues(&project).await?;
 
     let extractor = todo_curator::todo::TodoExtractor::new();
-    let all_references = extractor.extract_from_directory(&path)?;
+    let all_references = extractor.extract_from_directory(path)?;
 
-    // Collect matching references for each issue
     let mut mr_issues = Vec::new();
     for issue_num in issues {
         let matching_refs: Vec<_> = all_references
@@ -283,39 +343,45 @@ async fn check_mr_todos(
         }
     }
 
-    let mr_output = MrTodosOutput {
-        issues_closing: mr_issues.clone(),
-        status: if mr_issues.is_empty() {
-            "success".to_string()
-        } else {
-            "failure".to_string()
-        },
-    };
+    Ok(mr_issues)
+}
 
-    // Output based on format
+fn print_mr_text_output<W: Write + ?Sized>(
+    writer: &mut W,
+    mr_issues: &[MrIssue],
+    format: OutputFormat,
+) -> Result<()> {
     match format {
         OutputFormat::Json => {
+            let mr_output = MrTodosOutput {
+                issues_closing: mr_issues.to_vec(),
+                status: if mr_issues.is_empty() {
+                    "success".to_string()
+                } else {
+                    "failure".to_string()
+                },
+            };
             let json = serde_json::to_string_pretty(&mr_output)?;
-            writeln!(output, "{}", json)?;
+            writeln!(writer, "{}", json)?;
         }
         OutputFormat::Text => {
             if mr_issues.is_empty() {
                 writeln!(
-                    output,
+                    writer,
                     "{}",
                     "No TODOs reference issues closed by this MR.".green()
                 )?;
             } else {
                 writeln!(
-                    output,
+                    writer,
                     "{}",
                     "TODO comments that will be closed by this MR:"
                         .yellow()
                         .bold()
                 )?;
-                for mr_issue in &mr_issues {
+                for mr_issue in mr_issues {
                     writeln!(
-                        output,
+                        writer,
                         "{}: {} reference(s) found",
                         format!("#{}", mr_issue.issue_number).yellow(),
                         mr_issue.references.len()
@@ -324,6 +390,23 @@ async fn check_mr_todos(
             }
         }
     }
+    Ok(())
+}
+
+async fn check_mr_todos(
+    path: PathBuf,
+    format: OutputFormat,
+    output_path: Option<PathBuf>,
+) -> Result<()> {
+    let mr_issues = find_mr_todos(&path).await?;
+
+    let mut output: Box<dyn Write> = if let Some(path) = output_path {
+        Box::new(File::create(path)?)
+    } else {
+        Box::new(io::stdout())
+    };
+
+    print_mr_text_output(&mut *output, &mr_issues, format)?;
 
     if !mr_issues.is_empty() {
         process::exit(1);

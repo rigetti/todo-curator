@@ -3,12 +3,14 @@ pub mod todo;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// JSON output format for check results
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckOutput {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub closed: Vec<checker::ClosedReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub not_found: Vec<checker::NotFoundReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lint_violations: Vec<todo::LintViolation>,
@@ -76,24 +78,29 @@ pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
     let extractor = todo::TodoExtractor::new();
     let references = extractor.extract_from_directory(&path)?;
 
-    // Lint for improperly-formatted TODOs
-    let linter = todo::TodoLinter::new();
-    let lint_violations = linter.lint_directory(&path)?;
-
     if references.is_empty() {
-        if lint_violations.is_empty() {
-            return Ok(CheckOutput::empty_success());
-        }
-        return Ok(CheckOutput {
-            closed: Vec::new(),
-            not_found: Vec::new(),
-            lint_violations,
-            status: "failure".to_string(),
-        });
+        return Ok(CheckOutput::empty_success());
     }
 
     let references_vec: Vec<_> = references.into_iter().collect();
     let result = checker.check_references(&references_vec).await?;
 
-    Ok(CheckOutput::from_result(result, lint_violations))
+    Ok(CheckOutput::from_result(result, Vec::new()))
+}
+
+/// Check for improperly-formatted TODO comments in a directory
+pub fn check_invalid(path: &Path) -> Result<CheckOutput> {
+    let linter = todo::TodoLinter::new();
+    let lint_violations = linter.lint_directory(path)?;
+
+    if lint_violations.is_empty() {
+        Ok(CheckOutput::empty_success())
+    } else {
+        Ok(CheckOutput {
+            closed: Vec::new(),
+            not_found: Vec::new(),
+            lint_violations,
+            status: "failure".to_string(),
+        })
+    }
 }
