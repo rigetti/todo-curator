@@ -1,4 +1,4 @@
-## 0.1.4-dev.2 (2026-06-04)
+## 0.1.4-dev.3 (2026-06-04)
 
 ### Features
 
@@ -9,6 +9,7 @@
 ### Fixes
 
 - nicer formatting
+- cli-release image
 
 ## 0.1.3 (2026-04-08)
 
