@@ -12,9 +12,13 @@ use std::sync::{Arc, Mutex};
 /// Walk source files in a directory, respecting `.gitignore` and standard filters.
 /// Yields only regular files (skips directories, symlinks, errors).
 fn walk_source_files(dir: &Path) -> impl Iterator<Item = DirEntry> {
-    WalkBuilder::new(dir)
-        .standard_filters(true)
-        .add(".gitlab-ci.yml")
+    let mut builder = WalkBuilder::new(dir);
+    builder.standard_filters(true);
+    let ci_file = dir.join(".gitlab-ci.yml");
+    if ci_file.exists() {
+        builder.add(ci_file);
+    }
+    builder
         .build()
         .filter_map(|result| result.ok())
         .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
