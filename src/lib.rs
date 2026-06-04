@@ -10,13 +10,21 @@ use std::path::PathBuf;
 pub struct CheckOutput {
     pub closed: Vec<checker::ClosedReference>,
     pub not_found: Vec<checker::NotFoundReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_violations: Vec<todo::LintViolation>,
     pub status: String,
 }
 
 impl CheckOutput {
-    /// Create a CheckOutput from a CheckResult
-    pub fn from_result(result: checker::CheckResult) -> Self {
-        let status = if result.closed.is_empty() && result.not_found.is_empty() {
+    /// Create a CheckOutput from a CheckResult and lint violations
+    pub fn from_result(
+        result: checker::CheckResult,
+        lint_violations: Vec<todo::LintViolation>,
+    ) -> Self {
+        let status = if result.closed.is_empty()
+            && result.not_found.is_empty()
+            && lint_violations.is_empty()
+        {
             "success".to_string()
         } else {
             "failure".to_string()
@@ -25,6 +33,7 @@ impl CheckOutput {
         Self {
             closed: result.closed,
             not_found: result.not_found,
+            lint_violations,
             status,
         }
     }
@@ -34,13 +43,14 @@ impl CheckOutput {
         Self {
             closed: Vec::new(),
             not_found: Vec::new(),
+            lint_violations: Vec::new(),
             status: "success".to_string(),
         }
     }
 
     /// Check if there are any errors (closed or not found issues)
     pub fn has_errors(&self) -> bool {
-        !self.closed.is_empty() || !self.not_found.is_empty()
+        !self.closed.is_empty() || !self.not_found.is_empty() || !self.lint_violations.is_empty()
     }
 }
 
@@ -66,12 +76,24 @@ pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
     let extractor = todo::TodoExtractor::new();
     let references = extractor.extract_from_directory(&path)?;
 
+    // Lint for improperly-formatted TODOs
+    let linter = todo::TodoLinter::new();
+    let lint_violations = linter.lint_directory(&path)?;
+
     if references.is_empty() {
-        return Ok(CheckOutput::empty_success());
+        if lint_violations.is_empty() {
+            return Ok(CheckOutput::empty_success());
+        }
+        return Ok(CheckOutput {
+            closed: Vec::new(),
+            not_found: Vec::new(),
+            lint_violations,
+            status: "failure".to_string(),
+        });
     }
 
     let references_vec: Vec<_> = references.into_iter().collect();
     let result = checker.check_references(&references_vec).await?;
 
-    Ok(CheckOutput::from_result(result))
+    Ok(CheckOutput::from_result(result, lint_violations))
 }

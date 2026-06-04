@@ -173,6 +173,26 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
     if !output.has_errors() {
         writeln!(writer, "{}", "All TODO references are valid.".green())?;
     }
+
+    if !output.lint_violations.is_empty() {
+        writeln!(
+            writer,
+            "\n{}",
+            "Improperly-formatted TODO comments:".red().bold()
+        )?;
+        for violation in &output.lint_violations {
+            writeln!(
+                writer,
+                "  {}:{}: {} [{}]",
+                violation.file_path.bold(),
+                violation.line_number.to_string().bold(),
+                violation.hint.yellow(),
+                violation.rule.dimmed(),
+            )?;
+            writeln!(writer, "    {}", violation.source_line.dimmed())?;
+        }
+    }
+
     Ok(())
 }
 
