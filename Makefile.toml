@@ -6,3 +6,6 @@ extend = [
 [config]
 default_to_workspace = false
 load_script = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY:-$(git rev-parse --show-toplevel)}/scripts/update-qcs-infrastructure"
+
+[env]
+USE_CARGO_HACK = false

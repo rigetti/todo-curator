@@ -30,6 +30,9 @@ fmt:
 
 test:
   extends: [.cargo_nextest]
+  # We don't need to use --all-features here, because the integration tests are in other jobs.
+  script:
+    cargo nextest run
 
 # We don't use the relint or forbid-direct-deps CI jobs because this is just a utility.
 # We don't use the TODO-checking jobs because we'd need to ignore any source-code files with the forbidden patterns as regex or test strings.
