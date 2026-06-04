@@ -1,3 +1,10 @@
+## 0.1.4-dev.0 (2026-06-04)
+
+### Features
+
+- replace 'invalid TODO' relint rules
+- permit 'TODO(ref)' pattern
+
 ## 0.1.3 (2026-04-08)
 
 ### Fixes
