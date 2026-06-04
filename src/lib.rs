@@ -5,6 +5,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use todo::LintViolationMap;
+
 /// JSON output format for check results
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckOutput {
@@ -12,8 +14,8 @@ pub struct CheckOutput {
     pub closed: Vec<checker::ClosedReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub not_found: Vec<checker::NotFoundReference>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lint_violations: Vec<todo::LintViolation>,
+    #[serde(default, skip_serializing_if = "LintViolationMap::is_empty")]
+    pub lint_violations: LintViolationMap,
     pub status: String,
 }
 
@@ -21,7 +23,7 @@ impl CheckOutput {
     /// Create a CheckOutput from a CheckResult and lint violations
     pub fn from_result(
         result: checker::CheckResult,
-        lint_violations: Vec<todo::LintViolation>,
+        lint_violations: LintViolationMap,
     ) -> Self {
         let status = if result.closed.is_empty()
             && result.not_found.is_empty()
@@ -45,14 +47,16 @@ impl CheckOutput {
         Self {
             closed: Vec::new(),
             not_found: Vec::new(),
-            lint_violations: Vec::new(),
+            lint_violations: LintViolationMap::new(),
             status: "success".to_string(),
         }
     }
 
     /// Check if there are any errors (closed or not found issues)
     pub fn has_errors(&self) -> bool {
-        !self.closed.is_empty() || !self.not_found.is_empty() || !self.lint_violations.is_empty()
+        !self.closed.is_empty()
+            || !self.not_found.is_empty()
+            || !self.lint_violations.is_empty()
     }
 }
 
@@ -85,7 +89,7 @@ pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
     let references_vec: Vec<_> = references.into_iter().collect();
     let result = checker.check_references(&references_vec).await?;
 
-    Ok(CheckOutput::from_result(result, Vec::new()))
+    Ok(CheckOutput::from_result(result, LintViolationMap::new()))
 }
 
 /// Check for improperly-formatted TODO comments in a directory

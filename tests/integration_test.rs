@@ -228,7 +228,7 @@ fn test_directory_scanning() {
 #[test]
 fn test_lint_forbidden_patterns() {
     use std::fs;
-    use todo_curator::todo::{LintViolation, TodoLinter};
+    use todo_curator::todo::{LintCategory, TodoLinter};
 
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_forbidden");
     let _ = fs::remove_dir_all(&temp_dir);
@@ -256,41 +256,32 @@ fn test_lint_forbidden_patterns() {
     let _ = fs::remove_dir_all(&temp_dir);
 
     // Should catch XXX, FIXME, TEMP, TBD (non-mergeable)
-    let non_mergeable: Vec<&LintViolation> = violations
-        .iter()
-        .filter(|v| v.rule == "non-mergeable TODOs")
-        .collect();
+    let non_mergeable = violations.get(&LintCategory::NonMergeable);
     assert!(
-        non_mergeable.len() >= 4,
+        non_mergeable.map_or(false, |v| v.len() >= 4),
         "Should catch XXX, FIXME, TEMP, TBD. Found: {:?}",
         non_mergeable
     );
 
     // Should catch MVP
-    let mvp: Vec<&LintViolation> = violations
-        .iter()
-        .filter(|v| v.rule == "MVP comments")
-        .collect();
-    assert!(!mvp.is_empty(), "Should catch MVP comment");
+    let mvp = violations.get(&LintCategory::MvpComment);
+    assert!(
+        mvp.map_or(false, |v| !v.is_empty()),
+        "Should catch MVP comment"
+    );
 
     // Should catch TODOs with incorrect syntax
-    let bad_syntax: Vec<&LintViolation> = violations
-        .iter()
-        .filter(|v| v.rule == "TODOs with incorrect syntax")
-        .collect();
+    let bad_syntax = violations.get(&LintCategory::IncorrectSyntax);
     assert!(
-        bad_syntax.len() >= 2,
+        bad_syntax.map_or(false, |v| v.len() >= 2),
         "Should catch TODO without ticket and TODO: without ticket. Found: {:?}",
         bad_syntax
     );
 
     // Should catch uncapitalized patterns
-    let uncap: Vec<&LintViolation> = violations
-        .iter()
-        .filter(|v| v.rule == "uncapitalized TODO patterns")
-        .collect();
+    let uncap = violations.get(&LintCategory::Uncapitalized);
     assert!(
-        uncap.len() >= 3,
+        uncap.map_or(false, |v| v.len() >= 3),
         "Should catch todo, fixme, tbd lowercase. Found: {:?}",
         uncap
     );

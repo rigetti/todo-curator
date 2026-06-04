@@ -4,26 +4,65 @@ use grep_searcher::Searcher;
 use ignore::WalkBuilder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// Categories of lint violations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LintCategory {
+    NonMergeable,
+    MvpComment,
+    IncorrectSyntax,
+    Uncapitalized,
+}
+
+impl LintCategory {
+    /// Header text for this category when printing violations.
+    pub fn header(&self) -> &'static str {
+        match self {
+            Self::NonMergeable => "Non-mergeable TODOs:",
+            Self::MvpComment => "Non-mergeable TODOs:",
+            Self::IncorrectSyntax => "Improperly-formatted TODO comments:",
+            Self::Uncapitalized => "Improperly-formatted TODO comments:",
+        }
+    }
+
+    /// Optional hint printed once beneath the header.
+    pub fn header_hint(&self) -> Option<&'static str> {
+        match self {
+            Self::IncorrectSyntax | Self::Uncapitalized => Some(
+                r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance""#,
+            ),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for LintCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.header())
+    }
+}
 
 /// A lint violation found in a TODO comment.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LintViolation {
-    pub rule: String,
-    pub hint: String,
+    pub category: LintCategory,
     pub source_line: String,
     pub file_path: String,
     pub line_number: u64,
 }
 
+/// A map of lint violations grouped by category.
+pub type LintViolationMap = HashMap<LintCategory, Vec<LintViolation>>;
+
 struct LintRule {
-    name: String,
+    category: LintCategory,
     pattern: Regex,
     /// If set, lines matching pattern are only violations if they do NOT match this regex.
     exclude_pattern: Option<Regex>,
-    hint: String,
     file_exclude: Regex,
 }
 
@@ -42,36 +81,32 @@ impl TodoLinter {
     pub fn new() -> Self {
         let rules = vec![
             LintRule {
-                name: "non-mergeable TODOs".to_string(),
+                category: LintCategory::NonMergeable,
                 pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
                 exclude_pattern: None,
-                hint: "XXX, FIXME, TEMP, and TBD must be resolved prior to merge".to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
-                name: "MVP comments".to_string(),
+                category: LintCategory::MvpComment,
                 pattern: Regex::new(r"\b(MVP)\b").unwrap(),
                 exclude_pattern: None,
-                hint: "Comments should not refer to 'MVP'".to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
-                name: "TODOs with incorrect syntax".to_string(),
+                category: LintCategory::IncorrectSyntax,
                 pattern: Regex::new(r"\bTODO...").unwrap(),
                 exclude_pattern: Some(Regex::new(
                     r"\bTODO(:? (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+| performance)",
                 ).unwrap()),
-                hint: r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance" for TODO comments"#.to_string(),
                 file_exclude: Regex::new(
                     r"(^|/)docs/todo-comments\.md$|(^|/)docs/repo-rules-and-guidelines\.md$|(^|/)vendor/|scripts/check-.*issues\.sh$|mermaid.*\.js$",
                 )
                 .unwrap(),
             },
             LintRule {
-                name: "uncapitalized TODO patterns".to_string(),
+                category: LintCategory::Uncapitalized,
                 pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
                 exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
-                hint: r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance" for TODO comments"#.to_string(),
                 file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
         ];
@@ -79,8 +114,8 @@ impl TodoLinter {
         Self { rules }
     }
 
-    pub fn lint_directory(&self, dir: &Path) -> anyhow::Result<Vec<LintViolation>> {
-        let violations = Arc::new(Mutex::new(Vec::new()));
+    pub fn lint_directory(&self, dir: &Path) -> anyhow::Result<LintViolationMap> {
+        let violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
 
         // Match any line that could contain a violation
         let combined_pattern =
@@ -125,13 +160,15 @@ impl TodoLinter {
                                     continue;
                                 }
                             }
-                            viols.lock().unwrap().push(LintViolation {
-                                rule: rule.name.clone(),
-                                hint: rule.hint.clone(),
-                                source_line: line.trim().to_string(),
-                                file_path: path.to_string_lossy().to_string(),
-                                line_number: lnum,
-                            });
+                            viols.lock().unwrap()
+                                .entry(rule.category)
+                                .or_default()
+                                .push(LintViolation {
+                                    category: rule.category,
+                                    source_line: line.trim().to_string(),
+                                    file_path: path.to_string_lossy().to_string(),
+                                    line_number: lnum,
+                                });
                         }
                     }
                     Ok(true)
