@@ -1,13 +1,24 @@
 use grep_regex::RegexMatcher;
 use grep_searcher::sinks::UTF8;
 use grep_searcher::Searcher;
-use ignore::WalkBuilder;
+use ignore::{DirEntry, WalkBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// Walk source files in a directory, respecting `.gitignore` and standard filters.
+/// Yields only regular files (skips directories, symlinks, errors).
+fn walk_source_files(dir: &Path) -> impl Iterator<Item = DirEntry> {
+    WalkBuilder::new(dir)
+        .standard_filters(true)
+        .add(".gitlab-ci.yml")
+        .build()
+        .filter_map(|result| result.ok())
+        .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+}
 
 /// Categories of lint violations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -122,21 +133,7 @@ impl TodoLinter {
             r"\b(XXX|FIXME|TEMP|TBD|MVP|TODO)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
         let matcher = RegexMatcher::new(combined_pattern)?;
 
-        let walker = WalkBuilder::new(dir)
-            .standard_filters(true)
-            .add(".gitlab-ci.yml")
-            .build();
-
-        for result in walker {
-            let entry = match result {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-
-            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                continue;
-            }
-
+        for entry in walk_source_files(dir) {
             let path = entry.path();
             let file_path_str = path
                 .strip_prefix(dir)
@@ -160,7 +157,9 @@ impl TodoLinter {
                                     continue;
                                 }
                             }
-                            viols.lock().unwrap()
+                            viols
+                                .lock()
+                                .unwrap()
                                 .entry(rule.category)
                                 .or_default()
                                 .push(LintViolation {
@@ -626,22 +625,7 @@ impl TodoExtractor {
         let todo_pattern = r"\bTODO:?";
         let matcher = RegexMatcher::new(todo_pattern)?;
 
-        // Use ignore crate to walk directory respecting .gitignore
-        let walker = WalkBuilder::new(dir)
-            .standard_filters(true) // Enable standard filters
-            .add(".gitlab-ci.yml")
-            .build();
-
-        for result in walker {
-            let entry = match result {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-
-            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                continue;
-            }
-
+        for entry in walk_source_files(dir) {
             let path = entry.path();
             tracing::debug!("Processing file: {}", path.display());
             let refs = all_references.clone();

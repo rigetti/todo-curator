@@ -21,10 +21,7 @@ pub struct CheckOutput {
 
 impl CheckOutput {
     /// Create a CheckOutput from a CheckResult and lint violations
-    pub fn from_result(
-        result: checker::CheckResult,
-        lint_violations: LintViolationMap,
-    ) -> Self {
+    pub fn from_result(result: checker::CheckResult, lint_violations: LintViolationMap) -> Self {
         let status = if result.closed.is_empty()
             && result.not_found.is_empty()
             && lint_violations.is_empty()
@@ -54,9 +51,7 @@ impl CheckOutput {
 
     /// Check if there are any errors (closed or not found issues)
     pub fn has_errors(&self) -> bool {
-        !self.closed.is_empty()
-            || !self.not_found.is_empty()
-            || !self.lint_violations.is_empty()
+        !self.closed.is_empty() || !self.not_found.is_empty() || !self.lint_violations.is_empty()
     }
 }
 
