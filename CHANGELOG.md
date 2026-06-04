@@ -1,9 +1,10 @@
-## 0.1.4-dev.1 (2026-06-04)
+## 0.1.4-dev.2 (2026-06-04)
 
 ### Features
 
 - replace 'invalid TODO' relint rules
 - permit 'TODO(ref)' pattern
+- split commands up better
 
 ### Fixes
 
