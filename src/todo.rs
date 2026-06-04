@@ -48,7 +48,7 @@ impl TodoLinter {
             LintRule {
                 name: "TODOs with incorrect syntax".to_string(),
                 pattern: Regex::new(
-                    r"\bTODO(?! (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+\b| performance)...",
+                    r"\bTODO(?! (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+\b| performance|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+)...",
                 )
                 .unwrap(),
                 hint: r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance" for TODO comments"#.to_string(),
@@ -256,9 +256,9 @@ pub struct TodoExtractor {
 impl TodoExtractor {
     pub fn new() -> Self {
         let patterns: Vec<(Regex, ExtractorFn)> = vec![
-            // Local GitLab issues: TODO #123
+            // Local GitLab issues: TODO #123 or TODO(#123)
             (
-                Regex::new(r"\bTODO:? #(\d+)").unwrap(),
+                Regex::new(r"\bTODO(?::? |\()#(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -275,7 +275,7 @@ impl TodoExtractor {
             ),
             // GitLab issues with full URLs: https://gitlab.com/group/.../repo/-/issues/123
             (
-                Regex::new(r"TODO:?.*https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)")
+                Regex::new(r"TODO(?::?.*|\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -293,7 +293,7 @@ impl TodoExtractor {
             ),
             // GitLab issues without schema: gitlab.com/group/.../repo/-/issues/123
             (
-                Regex::new(r"TODO:?.*gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::?.*|\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -310,7 +310,7 @@ impl TodoExtractor {
             ),
             // GitHub issues with full URLs: https://github.com/owner/repo/issues/123
             (
-                Regex::new(r"TODO:? https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -327,7 +327,7 @@ impl TodoExtractor {
             ),
             // GitHub issues without schema: github.com/owner/repo/issues/123
             (
-                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -344,7 +344,7 @@ impl TodoExtractor {
             ),
             // GitHub issues in shorthand format: github.com/owner/repo#123
             (
-                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)#(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)#(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -362,7 +362,7 @@ impl TodoExtractor {
             // GitLab issues in rendered format: group/subgroup/repo#123
             // NOTE: This must come AFTER GitHub patterns to avoid misclassifying github.com URLs
             (
-                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -377,9 +377,9 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // Local GitLab MRs: TODO !123
+            // Local GitLab MRs: TODO !123 or TODO(!123)
             (
-                Regex::new(r"\bTODO:? !(\d+)").unwrap(),
+                Regex::new(r"\bTODO(?::? |\()!(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -397,7 +397,7 @@ impl TodoExtractor {
             // GitLab MRs with full URLs: https://gitlab.com/group/.../repo/-/merge_requests/123
             (
                 Regex::new(
-                    r"TODO:? https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)",
+                    r"TODO(?::? |\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)",
                 )
                 .unwrap(),
                 Box::new(
@@ -416,7 +416,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs without schema: gitlab.com/group/.../repo/-/merge_requests/123
             (
-                Regex::new(r"TODO:? gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)")
+                Regex::new(r"TODO(?::? |\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -434,7 +434,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs in rendered format: group/subgroup/repo!123
             (
-                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -451,7 +451,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs with full URLs: https://github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO:? https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -468,7 +468,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs without schema: github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO:? github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -483,9 +483,9 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // Local GitLab epics: TODO &123
+            // Local GitLab epics: TODO &123 or TODO(&123)
             (
-                Regex::new(r"\bTODO:? &(\d+)").unwrap(),
+                Regex::new(r"\bTODO(?::? |\()&(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -502,7 +502,7 @@ impl TodoExtractor {
             ),
             // GitLab epics with full URLs: https://gitlab.com/groups/group/.../path/-/epics/123
             (
-                Regex::new(r"TODO:? https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
+                Regex::new(r"TODO(?::? |\()https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -520,7 +520,7 @@ impl TodoExtractor {
             ),
             // GitLab epics without schema: gitlab.com/groups/group/.../path/-/epics/123
             (
-                Regex::new(r"TODO:? gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
@@ -537,7 +537,7 @@ impl TodoExtractor {
             ),
             // GitLab epics in rendered format: group/subgroup/path&123
             (
-                Regex::new(r"TODO:? \b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)").unwrap(),
+                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
