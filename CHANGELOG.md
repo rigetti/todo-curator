@@ -1,3 +1,9 @@
+## 0.1.5 (2026-06-05)
+
+### Features
+
+- changes for local use, support `work_items` URLs
+
 ## 0.1.4 (2026-06-04)
 
 ### Features
