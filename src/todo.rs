@@ -48,7 +48,7 @@ impl LintCategory {
     pub fn header_hint(&self) -> Option<&'static str> {
         match self {
             Self::IncorrectSyntax | Self::Uncapitalized => Some(
-                r#"use "TODO [repo]#<ticket>", "TODO [repo]!<merge-request>", "TODO [group]&<epic>", or "TODO performance""#,
+                r#"use `TODO(<ref>)` or `TODO <ref>:`, where `<ref>` is `[repo]#<ticket>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#,
             ),
             _ => None,
         }
@@ -334,9 +334,11 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // GitLab issues with full URLs: https://gitlab.com/group/.../repo/-/issues/123
+            // GitLab issues/work items with full URLs:
+            // https://gitlab.com/group/.../repo/-/issues/123
+            // https://gitlab.com/group/.../repo/-/work_items/123
             (
-                Regex::new(r"TODO(?::?.*|\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)")
+                Regex::new(r"TODO(?::?.*|\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -352,9 +354,11 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // GitLab issues without schema: gitlab.com/group/.../repo/-/issues/123
+            // GitLab issues/work items without schema:
+            // gitlab.com/group/.../repo/-/issues/123
+            // gitlab.com/group/.../repo/-/work_items/123
             (
-                Regex::new(r"TODO(?::?.*|\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/issues/(\d+)").unwrap(),
+                Regex::new(r"TODO(?::?.*|\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();

@@ -22,7 +22,24 @@
 //! GH_TOKEN=$(gh auth token) GITLAB_TOKEN=$(glab config get token) cargo test --test api_integration_test --features test-integration-github,test-integration-gitlab
 //! ```
 
-use todo_curator::{check_closed_references, todo::TodoReference};
+use std::path::PathBuf;
+use todo_curator::{
+    check_closed_references,
+    checker::{ProjectDetection, StatusChecker},
+    todo::TodoReference,
+    CheckOutput,
+};
+
+async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
+    let checker = StatusChecker::new()
+        .await
+        .expect("Failed to initialize status checker");
+    let project_detection = ProjectDetection::None;
+
+    check_closed_references(path, &project_detection, &checker)
+        .await
+        .expect("Failed to check closed references")
+}
 
 /// Test that the tool correctly identifies an open GitLab issue
 /// Uses issue #1 in rigetti/experimental/kstrand/todo-curator which is kept permanently open
@@ -42,9 +59,7 @@ async fn test_open_gitlab_issue() {
     .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -82,9 +97,7 @@ async fn test_closed_github_issue() {
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -137,9 +150,7 @@ async fn test_closed_gitlab_issue() {
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -195,9 +206,7 @@ async fn test_nonexistent_github_issue() {
     .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -252,9 +261,7 @@ async fn test_nonexistent_gitlab_issue() {
     .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -318,9 +325,7 @@ async fn test_mixed_issue_states() {
     .expect("Failed to write test file");
 
     // Call check_closed_references directly
-    let result = check_closed_references(test_file.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_file.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_file(&test_file);
@@ -411,9 +416,7 @@ async fn test_closed_gitlab_epic() {
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
-    let result = check_closed_references(test_dir.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_dir.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_dir_all(&test_dir);
@@ -467,9 +470,7 @@ async fn test_open_gitlab_epic() {
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
-    let result = check_closed_references(test_dir.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_dir.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_dir_all(&test_dir);
@@ -513,9 +514,7 @@ async fn test_gitlab_epic_full_url() {
     .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
-    let result = check_closed_references(test_dir.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_dir.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_dir_all(&test_dir);
@@ -562,9 +561,7 @@ async fn test_nonexistent_gitlab_epic() {
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
-    let result = check_closed_references(test_dir.clone())
-        .await
-        .expect("Failed to check closed references");
+    let result = run_closed_reference_check(test_dir.clone()).await;
 
     // Clean up
     let _ = std::fs::remove_dir_all(&test_dir);

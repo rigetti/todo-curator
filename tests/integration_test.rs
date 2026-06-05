@@ -451,3 +451,52 @@ fn test_parenthesized_todo_extraction() {
         refs
     );
 }
+
+/// Test that GitLab work item URL forms are parsed as GitLab issues.
+#[test]
+fn test_gitlab_work_item_url_extraction() {
+    use std::fs;
+    use todo_curator::todo::{TodoExtractor, TodoReference};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_work_items_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO https://gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/123
+// TODO gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/456
+"#;
+
+    fs::write(temp_dir.join("work_items.rs"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let references = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let refs: Vec<_> = references
+        .iter()
+        .filter(|r| r.file_path().contains("work_items.rs"))
+        .collect();
+
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 123, .. }
+            if p == "rigetti/qcs/services/compute-v2"
+        )),
+        "Should extract full-schema work_items URL as GitLab issue. Got: {:#?}",
+        refs
+    );
+
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 456, .. }
+            if p == "rigetti/qcs/services/compute-v2"
+        )),
+        "Should extract no-schema work_items URL as GitLab issue. Got: {:#?}",
+        refs
+    );
+}

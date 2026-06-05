@@ -6,7 +6,10 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use todo_curator::{check_closed_references, check_invalid, CheckOutput};
+use todo_curator::{
+    check_closed_references, check_invalid, checker::ProjectDetection, checker::StatusChecker,
+    CheckOutput,
+};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
@@ -23,56 +26,47 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(clap::Args)]
+struct Args {
+    #[arg(short, long, default_value = ".")]
+    path: PathBuf,
+
+    #[arg(long, value_enum, default_value = "text", help = "Output format")]
+    format: OutputFormat,
+
+    #[arg(short, long, help = "Output file (default: stdout)")]
+    output: Option<PathBuf>,
+}
+
 #[derive(Subcommand)]
 #[allow(clippy::enum_variant_names)]
 enum Commands {
     #[command(about = "Check for TODO comments referencing closed issues or MRs")]
     CheckClosed {
-        #[arg(short, long, default_value = ".")]
-        path: PathBuf,
-
-        #[arg(long, value_enum, default_value = "text", help = "Output format")]
-        format: OutputFormat,
-
-        #[arg(short, long, help = "Output file (default: stdout)")]
-        output: Option<PathBuf>,
+        #[command(flatten)]
+        args: Args,
     },
 
     #[command(about = "Check for improperly-formatted TODO comments")]
     CheckInvalid {
-        #[arg(short, long, default_value = ".")]
-        path: PathBuf,
-
-        #[arg(long, value_enum, default_value = "text", help = "Output format")]
-        format: OutputFormat,
-
-        #[arg(short, long, help = "Output file (default: stdout)")]
-        output: Option<PathBuf>,
+        #[command(flatten)]
+        args: Args,
     },
 
     #[command(about = "Run all checks (check-closed + check-invalid)")]
     CheckAll {
-        #[arg(short, long, default_value = ".")]
-        path: PathBuf,
-
-        #[arg(long, value_enum, default_value = "text", help = "Output format")]
-        format: OutputFormat,
-
-        #[arg(short, long, help = "Output file (default: stdout)")]
-        output: Option<PathBuf>,
+        #[command(flatten)]
+        args: Args,
     },
 
     #[command(about = "Check for TODO comments that should be removed when current MR closes")]
     CheckMrTodos {
-        #[arg(short, long, default_value = ".")]
-        path: PathBuf,
-
-        #[arg(long, value_enum, default_value = "text", help = "Output format")]
-        format: OutputFormat,
-
-        #[arg(short, long, help = "Output file (default: stdout)")]
-        output: Option<PathBuf>,
+        #[command(flatten)]
+        args: Args,
     },
+
+    #[command(about = "Validate that both GitHub and GitLab clients initialize")]
+    ValidateAuth,
 }
 
 #[tokio::main]
@@ -80,34 +74,70 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
+    if matches!(cli.command, Commands::ValidateAuth) {
+        todo_curator::checker::StatusChecker::validate_auth().await?;
+        println!("Authentication validated for GitHub and GitLab.");
+        return Ok(());
+    }
+
+    let path = match &cli.command {
+        Commands::CheckClosed { args }
+        | Commands::CheckInvalid { args }
+        | Commands::CheckAll { args }
+        | Commands::CheckMrTodos { args } => args.path.clone(),
+        Commands::ValidateAuth => unreachable!(),
+    };
+
+    let project_detection = StatusChecker::detect_project(&path);
+    match &project_detection {
+        ProjectDetection::GitLab(project) => {
+            tracing::debug!("Detected GitLab project: {project}");
+        }
+        ProjectDetection::GitHub(repo) => {
+            tracing::debug!("Detected GitHub repo: {repo}");
+        }
+        ProjectDetection::None => {
+            tracing::error!("No project detected!");
+        }
+    };
+
+    let checker = StatusChecker::new().await?;
+    checker.check_auth()?;
+
     match cli.command {
-        Commands::CheckClosed {
-            path,
-            format,
-            output: output_path,
-        } => {
-            let result = check_closed_references(path).await?;
+        Commands::CheckClosed { args } => {
+            let Args {
+                path,
+                format,
+                output: output_path,
+            } = args;
+            let result = check_closed_references(path, &project_detection, &checker).await?;
             output_and_exit(&result, format, output_path)?;
         }
-        Commands::CheckInvalid {
-            path,
-            format,
-            output: output_path,
-        } => {
-            let result = check_invalid(&path)?;
+        Commands::CheckInvalid { args } => {
+            let Args {
+                path,
+                format,
+                output: output_path,
+            } = args;
+            let result = check_invalid(&path, &project_detection, &checker)?;
             output_and_exit(&result, format, output_path)?;
         }
-        Commands::CheckAll {
-            path,
-            format,
-            output: output_path,
-        } => {
-            let mut closed_result = check_closed_references(path.clone()).await?;
-            let invalid_result = check_invalid(&path)?;
+        Commands::CheckAll { args } => {
+            let Args {
+                path,
+                format,
+                output: output_path,
+            } = args;
+            let mut closed_result =
+                check_closed_references(path.clone(), &project_detection, &checker).await?;
+            let invalid_result = check_invalid(&path, &project_detection, &checker)?;
             closed_result.lint_violations = invalid_result.lint_violations;
 
             // Also run MR check (best-effort: skip if not in MR context)
-            let mr_issues: Vec<MrIssue> = find_mr_todos(&path).await.unwrap_or_default();
+            let mr_issues: Vec<MrIssue> = find_mr_todos(&path, &project_detection, &checker)
+                .await
+                .unwrap_or_default();
 
             if closed_result.has_errors() || !mr_issues.is_empty() {
                 closed_result.status = "failure".to_string();
@@ -127,13 +157,15 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
         }
-        Commands::CheckMrTodos {
-            path,
-            format,
-            output: output_path,
-        } => {
-            check_mr_todos(path, format, output_path).await?;
+        Commands::CheckMrTodos { args } => {
+            let Args {
+                path,
+                format,
+                output: output_path,
+            } = args;
+            check_mr_todos(path, format, output_path, &project_detection, &checker).await?;
         }
+        Commands::ValidateAuth => unreachable!(),
     }
     Ok(())
 }
@@ -268,16 +300,17 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
     Ok(())
 }
 
-async fn find_mr_todos(path: &Path) -> Result<Vec<MrIssue>> {
-    let checker = todo_curator::checker::StatusChecker::new().await?;
-    checker.check_auth()?;
-
-    let project = match todo_curator::checker::StatusChecker::detect_project(path) {
-        todo_curator::checker::ProjectDetection::GitLab(proj) => proj,
-        todo_curator::checker::ProjectDetection::GitHub(_) => {
+async fn find_mr_todos(
+    path: &Path,
+    project_detection: &ProjectDetection,
+    checker: &StatusChecker,
+) -> Result<Vec<MrIssue>> {
+    let project = match project_detection {
+        ProjectDetection::GitLab(proj) => proj.clone(),
+        ProjectDetection::GitHub(_) => {
             anyhow::bail!("GitHub PR TODO checking not yet implemented")
         }
-        todo_curator::checker::ProjectDetection::None => {
+        ProjectDetection::None => {
             anyhow::bail!(
                 "Could not detect project. Set CI_PROJECT_PATH or GITLAB_PROJECT environment variable."
             )
@@ -366,8 +399,10 @@ async fn check_mr_todos(
     path: PathBuf,
     format: OutputFormat,
     output_path: Option<PathBuf>,
+    project_detection: &ProjectDetection,
+    checker: &StatusChecker,
 ) -> Result<()> {
-    let mr_issues = find_mr_todos(&path).await?;
+    let mr_issues = find_mr_todos(&path, project_detection, checker).await?;
 
     let mut output: Box<dyn Write> = if let Some(path) = output_path {
         Box::new(File::create(path)?)
