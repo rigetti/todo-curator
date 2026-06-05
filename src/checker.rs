@@ -47,16 +47,23 @@ pub struct CheckResult {
 pub struct StatusChecker {
     github_client: Option<Octocrab>,
     gitlab_client: Option<AsyncGitlab>,
-    default_project: ProjectDetection,
+    github_token_present: bool,
+    gitlab_token_present: bool,
 }
 
 impl StatusChecker {
+    fn normalize_project_path(path: &str) -> String {
+        path.trim_start_matches('/')
+            .trim_end_matches(".git")
+            .to_string()
+    }
+
     /// Detect project from git remote origin URL
     /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
     pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
         // Check for CI_PROJECT_PATH first (GitLab CI)
         if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
-            return ProjectDetection::GitLab(ci_project_path);
+            return ProjectDetection::GitLab(Self::normalize_project_path(&ci_project_path));
         }
 
         // Try to discover git repository
@@ -85,14 +92,14 @@ impl StatusChecker {
         match url.host() {
             Some("github.com") => {
                 if let Some(path) = url.path_argument_safe() {
-                    ProjectDetection::GitHub(path.to_string())
+                    ProjectDetection::GitHub(Self::normalize_project_path(&path.to_string()))
                 } else {
                     ProjectDetection::None
                 }
             }
             Some("gitlab.com") => {
                 if let Some(path) = url.path_argument_safe() {
-                    ProjectDetection::GitLab(path.to_string())
+                    ProjectDetection::GitLab(Self::normalize_project_path(&path.to_string()))
                 } else {
                     ProjectDetection::None
                 }
@@ -102,68 +109,167 @@ impl StatusChecker {
     }
 
     pub async fn new() -> Result<Self> {
-        let github_client = Self::init_github_client()?;
-        let gitlab_client = Self::init_gitlab_client().await?;
+        let (github_client, gitlab_client, github_token_present, gitlab_token_present) =
+            Self::init_clients().await?;
 
         Ok(Self {
             github_client,
             gitlab_client,
-            default_project: ProjectDetection::None,
+            github_token_present,
+            gitlab_token_present,
         })
     }
 
-    pub async fn with_default_project(default_project: ProjectDetection) -> Result<Self> {
-        let github_client = Self::init_github_client()?;
-        let gitlab_client = Self::init_gitlab_client().await?;
+    async fn init_clients() -> Result<(Option<Octocrab>, Option<AsyncGitlab>, bool, bool)> {
+        let github_token = Self::github_token();
+        let gitlab_token = Self::gitlab_token();
 
-        Ok(Self {
+        let github_token_present = github_token.is_some();
+        let gitlab_token_present = gitlab_token.is_some();
+
+        let github_client = Self::init_github_client(github_token)?;
+        let gitlab_client = Self::init_gitlab_client(gitlab_token).await?;
+
+        Ok((
             github_client,
             gitlab_client,
-            default_project,
-        })
+            github_token_present,
+            gitlab_token_present,
+        ))
     }
 
-    fn init_github_client() -> Result<Option<Octocrab>> {
-        let token = env::var("GH_TOKEN")
-            .or_else(|_| env::var("GITHUB_TOKEN"))
-            .ok();
-
-        if let Some(token) = token {
-            let octocrab = Octocrab::builder()
-                .personal_token(token)
-                .build()
-                .context("Failed to build GitHub client")?;
-            Ok(Some(octocrab))
-        } else {
-            Ok(None)
+    pub async fn validate_auth() -> Result<()> {
+        let github_token = Self::github_token();
+        if github_token.is_none() {
+            anyhow::bail!("GitHub auth not configured: set GH_TOKEN or GITHUB_TOKEN");
         }
+
+        let github_client =
+            Self::init_github_client(github_token).context("Failed to initialize GitHub client")?;
+        if github_client.is_none() {
+            anyhow::bail!("Failed to initialize GitHub client");
+        }
+
+        let gitlab_token = Self::gitlab_token();
+        if gitlab_token.is_none() {
+            anyhow::bail!("GitLab auth not configured: set GITLAB_TOKEN or GL_TOKEN");
+        }
+
+        let gitlab_client = Self::init_gitlab_client(gitlab_token)
+            .await
+            .context("Failed to initialize GitLab client")?;
+        if gitlab_client.is_none() {
+            anyhow::bail!("Failed to initialize GitLab client");
+        }
+
+        Ok(())
     }
 
-    async fn init_gitlab_client() -> Result<Option<AsyncGitlab>> {
-        let token = env::var("GITLAB_TOKEN")
-            .or_else(|_| env::var("GL_TOKEN"))
-            .ok();
+    fn github_token() -> Option<String> {
+        env::var("GITHUB_TOKEN")
+            .or_else(|_| env::var("GH_TOKEN"))
+            .ok()
+    }
 
-        if let Some(token) = token {
-            let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
-            match gitlab::GitlabBuilder::new(&gitlab_host, token)
-                .build_async()
-                .await
-            {
-                Ok(client) => Ok(Some(client)),
-                Err(e) => {
-                    eprintln!("Warning: Failed to initialize GitLab client: {}", e);
-                    eprintln!("GitLab TODO checking will be skipped.");
-                    Ok(None)
+    fn gitlab_token() -> Option<String> {
+        env::var("GITLAB_TOKEN")
+            .or_else(|_| env::var("GL_TOKEN"))
+            .ok()
+    }
+
+    fn init_github_client(token: Option<String>) -> Result<Option<Octocrab>> {
+        let Some(token) = token else {
+            return Ok(None);
+        };
+
+        let octocrab = Octocrab::builder()
+            .personal_token(token)
+            .build()
+            .context("Failed to initialize GitHub client")?;
+
+        Ok(Some(octocrab))
+    }
+
+    fn normalized_gitlab_host() -> String {
+        let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
+
+        let mut cleaned = gitlab_host
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_start_matches("ssh://")
+            .trim_start_matches("git@");
+
+        // Handle generic ssh://user@host/path form.
+        if let Some((user, rest)) = cleaned.split_once('@') {
+            if !user.contains('/') {
+                cleaned = rest;
+            }
+        }
+
+        // Handle scp-like SSH remotes: host:path/to/repo.git.
+        if let Some(colon_idx) = cleaned.find(':') {
+            let slash_idx = cleaned.find('/');
+
+            if slash_idx.is_none_or(|idx| colon_idx < idx) {
+                if let Some(idx) = slash_idx {
+                    let after_colon = &cleaned[colon_idx + 1..idx];
+                    if after_colon.chars().all(|c| c.is_ascii_digit()) {
+                        // host:port/path
+                        cleaned = &cleaned[..idx];
+                    } else {
+                        // host:path
+                        cleaned = &cleaned[..colon_idx];
+                    }
                 }
             }
-        } else {
-            Ok(None)
         }
+
+        cleaned
+            .split('/')
+            .next()
+            .unwrap_or(cleaned)
+            .trim_end_matches('/')
+            .to_string()
+    }
+
+    fn gitlab_token_type() -> String {
+        env::var("GITLAB_TOKEN_TYPE")
+            .or_else(|_| env::var("GL_TOKEN_TYPE"))
+            .unwrap_or_else(|_| "pat".to_string())
+            .to_ascii_lowercase()
+    }
+
+    async fn build_gitlab_client(
+        host: &str,
+        token: String,
+        token_type: &str,
+    ) -> Result<AsyncGitlab> {
+        let mut builder = gitlab::GitlabBuilder::new(host, token);
+        if matches!(token_type, "oauth" | "oauth2" | "bearer") {
+            builder.oauth2_token();
+        }
+
+        builder
+            .build_async()
+            .await
+            .context("Failed to initialize GitLab client")
+    }
+
+    async fn init_gitlab_client(token: Option<String>) -> Result<Option<AsyncGitlab>> {
+        let Some(token) = token else {
+            return Ok(None);
+        };
+
+        let gitlab_host = Self::normalized_gitlab_host();
+        let token_type = Self::gitlab_token_type();
+        let client = Self::build_gitlab_client(&gitlab_host, token, &token_type).await?;
+
+        Ok(Some(client))
     }
 
     pub fn check_auth(&self) -> Result<()> {
-        if self.gitlab_client.is_none() && self.github_client.is_none() {
+        if self.github_client.is_none() && self.gitlab_client.is_none() {
             anyhow::bail!(
                 "No authentication configured.\n\
                 Set GH_TOKEN (or GITHUB_TOKEN) and/or GITLAB_TOKEN (or GL_TOKEN) environment variables with your personal access tokens.\n\
@@ -173,15 +279,29 @@ impl StatusChecker {
             );
         }
 
+        if self.github_client.is_none() && !self.github_token_present {
+            tracing::warn!("GitHub token not set; GitHub TODO checking will be skipped.");
+        }
+        if self.gitlab_client.is_none() && !self.gitlab_token_present {
+            tracing::warn!("GitLab token not set; GitLab TODO checking will be skipped.");
+        }
+
         Ok(())
     }
 
-    pub async fn check_references(&self, references: &[TodoReference]) -> Result<CheckResult> {
+    pub async fn check_references(
+        &self,
+        default_project: &ProjectDetection,
+        references: &[TodoReference],
+    ) -> Result<CheckResult> {
         let mut closed = Vec::new();
         let mut not_found = Vec::new();
 
         for reference in references {
-            match self.check_single_reference(reference).await {
+            match self
+                .check_single_reference(default_project, reference)
+                .await
+            {
                 Ok(Some(closed_ref)) => closed.push(closed_ref),
                 Ok(None) => {} // Reference exists but is not closed
                 Err(e) => {
@@ -198,30 +318,31 @@ impl StatusChecker {
 
     async fn check_single_reference(
         &self,
+        default_project: &ProjectDetection,
         reference: &TodoReference,
     ) -> Result<Option<ClosedReference>> {
         match reference {
             TodoReference::GitLabIssue {
                 project, number, ..
             } => {
-                self.check_gitlab_issue(reference, project.as_deref(), *number)
+                self.check_gitlab_issue(default_project, reference, project.as_deref(), *number)
                     .await
             }
             TodoReference::GitHubIssue { repo, number, .. } => {
-                self.check_github_issue(reference, repo.as_deref(), *number)
+                self.check_github_issue(default_project, reference, repo.as_deref(), *number)
                     .await
             }
             TodoReference::GitLabMr {
                 project, number, ..
             } => {
-                self.check_gitlab_mr(reference, project.as_deref(), *number)
+                self.check_gitlab_mr(default_project, reference, project.as_deref(), *number)
                     .await
             }
             TodoReference::GitHubPr { repo, number, .. } => {
                 self.check_github_pr(reference, repo, *number).await
             }
             TodoReference::GitLabEpic { group, number, .. } => {
-                self.check_gitlab_epic(reference, group.as_deref(), *number)
+                self.check_gitlab_epic(default_project, reference, group.as_deref(), *number)
                     .await
             }
         }
@@ -229,6 +350,7 @@ impl StatusChecker {
 
     async fn check_gitlab_issue(
         &self,
+        default_project: &ProjectDetection,
         reference: &TodoReference,
         project: Option<&str>,
         number: u32,
@@ -239,7 +361,7 @@ impl StatusChecker {
 
         let project_path = match project {
             Some(p) => p,
-            None => match &self.default_project {
+            None => match default_project {
                 ProjectDetection::GitLab(p) => p.as_str(),
                 _ => anyhow::bail!("GitLab issue requires project path"),
             },
@@ -254,7 +376,9 @@ impl StatusChecker {
         let issue: GitLabIssue = match endpoint.query_async(client).await {
             Ok(issue) => issue,
             Err(e) => {
-                anyhow::bail!("GitLab issue not found or inaccessible: {}", e);
+                anyhow::bail!(
+                    "GitLab issue not found or inaccessible (project {project_path}): {e}"
+                );
             }
         };
 
@@ -270,6 +394,7 @@ impl StatusChecker {
 
     async fn check_github_issue(
         &self,
+        default_project: &ProjectDetection,
         reference: &TodoReference,
         repo: Option<&str>,
         number: u32,
@@ -280,7 +405,7 @@ impl StatusChecker {
 
         let repo_path = match repo {
             Some(r) => r,
-            None => match &self.default_project {
+            None => match default_project {
                 ProjectDetection::GitHub(r) => r.as_str(),
                 _ => anyhow::bail!("GitHub issue requires repository path"),
             },
@@ -311,6 +436,7 @@ impl StatusChecker {
 
     async fn check_gitlab_mr(
         &self,
+        default_project: &ProjectDetection,
         reference: &TodoReference,
         project: Option<&str>,
         number: u32,
@@ -321,7 +447,7 @@ impl StatusChecker {
 
         let project_path = match project {
             Some(p) => p,
-            None => match &self.default_project {
+            None => match default_project {
                 ProjectDetection::GitLab(p) => p.as_str(),
                 _ => anyhow::bail!("GitLab MR requires project path"),
             },
@@ -381,6 +507,7 @@ impl StatusChecker {
 
     async fn check_gitlab_epic(
         &self,
+        default_project: &ProjectDetection,
         reference: &TodoReference,
         group: Option<&str>,
         number: u32,
@@ -394,7 +521,7 @@ impl StatusChecker {
             Some(g) => g.to_string(),
             None => {
                 // For local epic references, we need to extract the group from the default project
-                match &self.default_project {
+                match default_project {
                     ProjectDetection::GitLab(project_path) => {
                         // Extract group from project path (e.g., "rigetti/qcs/services/myproject" -> "rigetti/qcs/services")
                         // Epics belong to groups, not projects, so we need to find the parent group
@@ -501,10 +628,23 @@ impl StatusChecker {
 
         let branch = match head.referent_name() {
             Some(name) => name.shorten().to_string(),
-            None => {
-                tracing::warn!("HEAD is detached, not on a branch");
-                return Ok(Vec::new());
-            }
+            None => match Self::find_branch_pointing_at_head(&repo) {
+                Ok(Some(branch)) => {
+                    tracing::debug!(
+                        "HEAD detached; selected branch pointing at HEAD: {}",
+                        branch
+                    );
+                    branch
+                }
+                Ok(None) => {
+                    tracing::warn!("HEAD is detached and no non-jj/keep branch points at HEAD");
+                    return Ok(Vec::new());
+                }
+                Err(e) => {
+                    tracing::warn!(error=%e, "failed to resolve branch name for detached HEAD");
+                    return Ok(Vec::new());
+                }
+            },
         };
 
         // Find MR for this branch
@@ -538,5 +678,38 @@ impl StatusChecker {
             .collect();
 
         Ok(issues)
+    }
+
+    /// Helper function for the common case when using `jj`:
+    /// `git` is in headless mode, but the `HEAD` reference points to the branch we care about.
+    fn find_branch_pointing_at_head(repo: &gix::Repository) -> Result<Option<String>> {
+        let head_id = repo.head_id().context("failed to resolve HEAD id")?;
+        let references = repo
+            .references()
+            .context("failed to initialize reference iteration")?;
+        let mut branches = references
+            .local_branches()
+            .context("failed to iterate local branches")?;
+
+        for reference in &mut branches {
+            let reference =
+                reference.map_err(|e| anyhow::anyhow!("failed to read branch reference: {e}"))?;
+            let Some(reference_id) = reference.try_id() else {
+                continue;
+            };
+
+            if reference_id != head_id {
+                continue;
+            }
+
+            let branch_name = reference.name().shorten().to_string();
+            if branch_name.starts_with("jj/keep") {
+                continue;
+            }
+
+            return Ok(Some(branch_name));
+        }
+
+        Ok(None)
     }
 }

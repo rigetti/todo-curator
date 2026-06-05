@@ -56,10 +56,12 @@ impl CheckOutput {
 }
 
 /// Check closed references in a directory
-pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
-    // Detect GitHub and GitLab projects from git origin for local TODO references
-    let project_detection = checker::StatusChecker::detect_project(&path);
-    match &project_detection {
+pub async fn check_closed_references(
+    path: PathBuf,
+    project_detection: &checker::ProjectDetection,
+    checker: &checker::StatusChecker,
+) -> Result<CheckOutput> {
+    match project_detection {
         checker::ProjectDetection::GitLab(project) => {
             tracing::debug!("Detected GitLab project: {project}");
         }
@@ -70,9 +72,6 @@ pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
             tracing::debug!("No project detected");
         }
     };
-    let checker = checker::StatusChecker::with_default_project(project_detection).await?;
-
-    checker.check_auth()?;
 
     let extractor = todo::TodoExtractor::new();
     let references = extractor.extract_from_directory(&path)?;
@@ -82,13 +81,19 @@ pub async fn check_closed_references(path: PathBuf) -> Result<CheckOutput> {
     }
 
     let references_vec: Vec<_> = references.into_iter().collect();
-    let result = checker.check_references(&references_vec).await?;
+    let result = checker
+        .check_references(project_detection, &references_vec)
+        .await?;
 
     Ok(CheckOutput::from_result(result, LintViolationMap::new()))
 }
 
 /// Check for improperly-formatted TODO comments in a directory
-pub fn check_invalid(path: &Path) -> Result<CheckOutput> {
+pub fn check_invalid(
+    path: &Path,
+    _project_detection: &checker::ProjectDetection,
+    _checker: &checker::StatusChecker,
+) -> Result<CheckOutput> {
     let linter = todo::TodoLinter::new();
     let lint_violations = linter.lint_directory(path)?;
 
