@@ -1,3 +1,9 @@
+## 0.1.6 (2026-06-06)
+
+### Features
+
+- env var for each flag; adds ignore-files flag/var
+
 ## 0.1.6-dev.0 (2026-06-06)
 
 ### Features
