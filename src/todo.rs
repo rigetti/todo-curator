@@ -78,12 +78,12 @@ struct LintRule {
     pattern: Regex,
     /// If set, lines matching pattern are only violations if they do NOT match this regex.
     exclude_pattern: Option<Regex>,
-    file_exclude: Regex,
 }
 
 /// Linter that detects improperly-formatted TODO comments.
 pub struct TodoLinter {
     rules: Vec<LintRule>,
+    exclude_file_regexes: Vec<Regex>,
 }
 
 impl Default for TodoLinter {
@@ -94,18 +94,39 @@ impl Default for TodoLinter {
 
 impl TodoLinter {
     pub fn new() -> Self {
+        Self {
+            rules: Self::default_rules(),
+            exclude_file_regexes: Vec::new(),
+        }
+    }
+
+    pub fn with_exclude_file_regexes(exclude_file_regexes: &[String]) -> anyhow::Result<Self> {
+        let exclude_file_regexes = exclude_file_regexes
+            .iter()
+            .map(|pattern| {
+                Regex::new(pattern).map_err(|e| {
+                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(Self {
+            rules: Self::default_rules(),
+            exclude_file_regexes,
+        })
+    }
+
+    fn default_rules() -> Vec<LintRule> {
         let rules = vec![
             LintRule {
                 category: LintCategory::NonMergeable,
                 pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
                 exclude_pattern: None,
-                file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
                 category: LintCategory::MvpComment,
                 pattern: Regex::new(r"\b(MVP)\b").unwrap(),
                 exclude_pattern: None,
-                file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
             LintRule {
                 category: LintCategory::IncorrectSyntax,
@@ -113,20 +134,15 @@ impl TodoLinter {
                 exclude_pattern: Some(Regex::new(
                     r"\bTODO(:? (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+| performance)",
                 ).unwrap()),
-                file_exclude: Regex::new(
-                    r"(^|/)docs/todo-comments\.md$|(^|/)docs/repo-rules-and-guidelines\.md$|(^|/)vendor/|scripts/check-.*issues\.sh$|mermaid.*\.js$",
-                )
-                .unwrap(),
             },
             LintRule {
                 category: LintCategory::Uncapitalized,
                 pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
                 exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
-                file_exclude: Regex::new(r"(^|/)docs/todo-comments\.md$|mermaid.*\.js$").unwrap(),
             },
         ];
 
-        Self { rules }
+        rules
     }
 
     pub fn lint_directory(&self, dir: &Path) -> anyhow::Result<LintViolationMap> {
@@ -145,6 +161,14 @@ impl TodoLinter {
                 .to_string_lossy()
                 .to_string();
 
+            if self
+                .exclude_file_regexes
+                .iter()
+                .any(|pattern| pattern.is_match(&file_path_str))
+            {
+                continue;
+            }
+
             let viols = violations.clone();
             let mut searcher = Searcher::new();
             let _ = searcher.search_path(
@@ -152,9 +176,6 @@ impl TodoLinter {
                 path,
                 UTF8(|lnum, line| {
                     for rule in &self.rules {
-                        if rule.file_exclude.is_match(&file_path_str) {
-                            continue;
-                        }
                         if rule.pattern.is_match(line) {
                             if let Some(ref exclude) = rule.exclude_pattern {
                                 if exclude.is_match(line) {

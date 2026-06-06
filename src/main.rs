@@ -28,14 +28,34 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct Args {
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value = ".", env = "TODO_CURATOR_PATH")]
     path: PathBuf,
 
-    #[arg(long, value_enum, default_value = "text", help = "Output format")]
+    #[arg(
+        long,
+        value_enum,
+        default_value = "text",
+        env = "TODO_CURATOR_FORMAT",
+        help = "Output format"
+    )]
     format: OutputFormat,
 
-    #[arg(short, long, help = "Output file (default: stdout)")]
+    #[arg(
+        short,
+        long,
+        env = "TODO_CURATOR_OUTPUT",
+        help = "Output file (default: stdout)"
+    )]
     output: Option<PathBuf>,
+
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        value_delimiter = ',',
+        env = "TODO_CURATOR_EXCLUDE_FILE_REGEX",
+        help = "Regex patterns for files to exclude from linting (repeat flag or provide comma-separated values)"
+    )]
+    exclude_file_regex: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -110,6 +130,7 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
+                ..
             } = args;
             let result = check_closed_references(path, &project_detection, &checker).await?;
             output_and_exit(&result, format, output_path)?;
@@ -119,8 +140,9 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
+                exclude_file_regex,
             } = args;
-            let result = check_invalid(&path, &project_detection, &checker)?;
+            let result = check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckAll { args } => {
@@ -128,10 +150,12 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
+                exclude_file_regex,
             } = args;
             let mut closed_result =
                 check_closed_references(path.clone(), &project_detection, &checker).await?;
-            let invalid_result = check_invalid(&path, &project_detection, &checker)?;
+            let invalid_result =
+                check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
             closed_result.lint_violations = invalid_result.lint_violations;
 
             // Also run MR check (best-effort: skip if not in MR context)
@@ -162,6 +186,7 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
+                ..
             } = args;
             check_mr_todos(path, format, output_path, &project_detection, &checker).await?;
         }
