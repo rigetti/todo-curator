@@ -331,6 +331,51 @@ fn test_lint_valid_patterns() {
     );
 }
 
+/// Test that exclude file regexes skip matching files during linting
+#[test]
+fn test_lint_exclude_file_regexes() {
+    use std::fs;
+    use todo_curator::todo::TodoLinter;
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_exclude");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    fs::write(
+        temp_dir.join("skip_me.rs"),
+        "// TODO without a ticket reference\n",
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.join("include_me.rs"),
+        "// TODO without a ticket reference\n",
+    )
+    .unwrap();
+
+    let linter = TodoLinter::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
+    let violations = linter.lint_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let incorrect_syntax = violations
+        .get(&todo_curator::todo::LintCategory::IncorrectSyntax)
+        .cloned()
+        .unwrap_or_default();
+
+    assert_eq!(
+        incorrect_syntax.len(),
+        1,
+        "Expected one lint violation from include_me.rs only. Found: {:#?}",
+        incorrect_syntax
+    );
+    assert!(
+        incorrect_syntax[0].file_path.contains("include_me.rs"),
+        "Expected violation to come from include_me.rs. Got: {:#?}",
+        incorrect_syntax
+    );
+}
+
 /// Test that TODO(<ref>) form is correctly extracted as references
 #[test]
 fn test_parenthesized_todo_extraction() {

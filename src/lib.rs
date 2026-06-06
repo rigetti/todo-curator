@@ -93,8 +93,9 @@ pub fn check_invalid(
     path: &Path,
     _project_detection: &checker::ProjectDetection,
     _checker: &checker::StatusChecker,
+    exclude_file_regexes: &[String],
 ) -> Result<CheckOutput> {
-    let linter = todo::TodoLinter::new();
+    let linter = todo::TodoLinter::with_exclude_file_regexes(exclude_file_regexes)?;
     let lint_violations = linter.lint_directory(path)?;
 
     if lint_violations.is_empty() {
