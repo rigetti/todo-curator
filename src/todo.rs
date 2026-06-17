@@ -73,6 +73,13 @@ pub struct LintViolation {
 /// A map of lint violations grouped by category.
 pub type LintViolationMap = HashMap<LintCategory, Vec<LintViolation>>;
 
+/// Result of TODO extraction, including parsed references and syntax violations.
+#[derive(Debug, Default)]
+pub struct ExtractionResult {
+    pub references: HashSet<TodoReference>,
+    pub lint_violations: LintViolationMap,
+}
+
 struct LintRule {
     category: LintCategory,
     pattern: Regex,
@@ -129,13 +136,6 @@ impl TodoLinter {
                 exclude_pattern: None,
             },
             LintRule {
-                category: LintCategory::IncorrectSyntax,
-                pattern: Regex::new(r"\bTODO...").unwrap(),
-                exclude_pattern: Some(Regex::new(
-                    r"\bTODO(:? (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+| performance)",
-                ).unwrap()),
-            },
-            LintRule {
                 category: LintCategory::Uncapitalized,
                 pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
                 exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
@@ -149,8 +149,7 @@ impl TodoLinter {
         let violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
 
         // Match any line that could contain a violation
-        let combined_pattern =
-            r"\b(XXX|FIXME|TEMP|TBD|MVP|TODO)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
+        let combined_pattern = r"\b(XXX|FIXME|TEMP|TBD|MVP)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
         let matcher = RegexMatcher::new(combined_pattern)?;
 
         for entry in walk_source_files(dir) {
@@ -326,6 +325,7 @@ type ExtractorFn =
     Box<dyn Fn(&regex::Captures, &str, &str, u64) -> Option<TodoReference> + Send + Sync>;
 
 pub struct TodoExtractor {
+    todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
 }
 
@@ -337,10 +337,33 @@ impl Default for TodoExtractor {
 
 impl TodoExtractor {
     pub fn new() -> Self {
+        // Extract TODO reference candidates in two forms:
+        // 1) TODO <single-ref>:
+        // 2) TODO(<multiple-refs>) or TODO (<multiple-refs>)
+        //
+        // This is intentionally applied with captures_iter so multiple TODOs on one line are
+        // each processed independently, e.g. "TODO (#7) TODO #18: TODO(#1,#2)".
+        let todo_ref_pattern = Regex::new(
+            r"(?x)
+                \bTODO\b # TODO on a word boundary
+                (?:
+                    \s+
+                    (?P<single_ref>
+                        [^:]+              # single ref token up to colon
+                    ):
+                    |
+                    \s*\(
+                    (?P<multiple_refs>[^)]+?)
+                    \)
+                )
+            ",
+        )
+        .unwrap();
+
         let patterns: Vec<(Regex, ExtractorFn)> = vec![
-            // Local GitLab issues: TODO #123 or TODO(#123)
+            // Local GitLab issues: #123
             (
-                Regex::new(r"\bTODO(?::? |\()#(\d+)").unwrap(),
+                Regex::new(r"^#(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -359,7 +382,7 @@ impl TodoExtractor {
             // https://gitlab.com/group/.../repo/-/issues/123
             // https://gitlab.com/group/.../repo/-/work_items/123
             (
-                Regex::new(r"TODO(?::?.*|\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)")
+                Regex::new(r"^https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)$")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -379,7 +402,8 @@ impl TodoExtractor {
             // gitlab.com/group/.../repo/-/issues/123
             // gitlab.com/group/.../repo/-/work_items/123
             (
-                Regex::new(r"TODO(?::?.*|\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)").unwrap(),
+                Regex::new(r"^gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)$")
+                    .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -396,7 +420,7 @@ impl TodoExtractor {
             ),
             // GitHub issues with full URLs: https://github.com/owner/repo/issues/123
             (
-                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Regex::new(r"^https?://github\.com/([^/]+/[^/]+)/issues/(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -413,7 +437,7 @@ impl TodoExtractor {
             ),
             // GitHub issues without schema: github.com/owner/repo/issues/123
             (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
+                Regex::new(r"^github\.com/([^/]+/[^/]+)/issues/(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -430,7 +454,7 @@ impl TodoExtractor {
             ),
             // GitHub issues in shorthand format: github.com/owner/repo#123
             (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)#(\d+)").unwrap(),
+                Regex::new(r"^github\.com/([^/]+/[^/]+)#(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -448,7 +472,7 @@ impl TodoExtractor {
             // GitLab issues in rendered format: group/subgroup/repo#123
             // NOTE: This must come AFTER GitHub patterns to avoid misclassifying github.com URLs
             (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -463,9 +487,9 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // Local GitLab MRs: TODO !123 or TODO(!123)
+            // Local GitLab MRs: !123
             (
-                Regex::new(r"\bTODO(?::? |\()!(\d+)").unwrap(),
+                Regex::new(r"^!(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -482,9 +506,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs with full URLs: https://gitlab.com/group/.../repo/-/merge_requests/123
             (
-                Regex::new(
-                    r"TODO(?::? |\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)",
-                )
+                Regex::new(r"^https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)$")
                 .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -502,7 +524,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs without schema: gitlab.com/group/.../repo/-/merge_requests/123
             (
-                Regex::new(r"TODO(?::? |\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)")
+                Regex::new(r"^gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)$")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -520,7 +542,7 @@ impl TodoExtractor {
             ),
             // GitLab MRs in rendered format: group/subgroup/repo!123
             (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
@@ -537,7 +559,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs with full URLs: https://github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -554,7 +576,7 @@ impl TodoExtractor {
             ),
             // GitHub PRs without schema: github.com/owner/repo/pull/123
             (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
+                Regex::new(r"^github\.com/([^/]+/[^/]+)/pull/(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
@@ -569,9 +591,9 @@ impl TodoExtractor {
                     },
                 ),
             ),
-            // Local GitLab epics: TODO &123 or TODO(&123)
+            // Local GitLab epics: &123
             (
-                Regex::new(r"\bTODO(?::? |\()&(\d+)").unwrap(),
+                Regex::new(r"^&(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         caps.get(1)
@@ -588,7 +610,7 @@ impl TodoExtractor {
             ),
             // GitLab epics with full URLs: https://gitlab.com/groups/group/.../path/-/epics/123
             (
-                Regex::new(r"TODO(?::? |\()https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
+                Regex::new(r"^https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)$")
                     .unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
@@ -606,7 +628,7 @@ impl TodoExtractor {
             ),
             // GitLab epics without schema: gitlab.com/groups/group/.../path/-/epics/123
             (
-                Regex::new(r"TODO(?::? |\()gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)").unwrap(),
+                Regex::new(r"^gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
@@ -623,7 +645,7 @@ impl TodoExtractor {
             ),
             // GitLab epics in rendered format: group/subgroup/path&123
             (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)").unwrap(),
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)$").unwrap(),
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
@@ -640,15 +662,43 @@ impl TodoExtractor {
             ),
         ];
 
-        Self { patterns }
+        Self {
+            todo_ref_pattern,
+            patterns,
+        }
     }
 
-    pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<HashSet<TodoReference>> {
+    fn extract_token_reference(
+        &self,
+        token: &str,
+        line: &str,
+        file_path: &str,
+        line_number: u64,
+    ) -> Option<TodoReference> {
+        let token = token.trim();
+        if token.is_empty() {
+            return None;
+        }
+
+        for (pattern, extractor) in &self.patterns {
+            if let Some(caps) = pattern.captures(token) {
+                if let Some(reference) = extractor(&caps, line, file_path, line_number) {
+                    return Some(reference);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<ExtractionResult> {
         tracing::debug!(
             "Extracting TODO references from directory: {}",
             dir.display()
         );
         let all_references = Arc::new(Mutex::new(HashSet::new()));
+        let lint_violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
+        let todo_presence_pattern = Regex::new(r"\bTODO\b")?;
 
         // Build a combined regex pattern that matches any TODO comment
         let todo_pattern = r"\bTODO:?";
@@ -658,6 +708,7 @@ impl TodoExtractor {
             let path = entry.path();
             tracing::debug!("Processing file: {}", path.display());
             let refs = all_references.clone();
+            let viols = lint_violations.clone();
             let file_path_str = path.to_string_lossy().to_string();
 
             // Use grep-searcher to efficiently search the file
@@ -666,14 +717,52 @@ impl TodoExtractor {
                 &matcher,
                 path,
                 UTF8(|lnum, line| {
-                    // Extract references from the matched line with file path and line number
-                    for (pattern, extractor) in &self.patterns {
-                        for caps in pattern.captures_iter(line) {
-                            if let Some(reference) = extractor(&caps, line, &file_path_str, lnum) {
+                    let mut line_has_match = false;
+
+                    for todo_caps in self.todo_ref_pattern.captures_iter(line) {
+                        if let Some(single_ref) = todo_caps.name("single_ref") {
+                            let single_ref = single_ref.as_str().trim_end_matches(':');
+                            if let Some(reference) = self.extract_token_reference(
+                                single_ref,
+                                line,
+                                &file_path_str,
+                                lnum,
+                            ) {
+                                line_has_match = true;
                                 refs.lock().unwrap().insert(reference);
                             }
                         }
+
+                        if let Some(multiple_refs) = todo_caps.name("multiple_refs") {
+                            for token in multiple_refs.as_str().split(',').map(str::trim) {
+                                if token.is_empty() {
+                                    continue;
+                                }
+
+                                if let Some(reference) =
+                                    self.extract_token_reference(token, line, &file_path_str, lnum)
+                                {
+                                    line_has_match = true;
+                                    refs.lock().unwrap().insert(reference);
+                                }
+                            }
+                        }
                     }
+
+                    if todo_presence_pattern.is_match(line) && !line_has_match {
+                        viols
+                            .lock()
+                            .unwrap()
+                            .entry(LintCategory::IncorrectSyntax)
+                            .or_default()
+                            .push(LintViolation {
+                                category: LintCategory::IncorrectSyntax,
+                                source_line: line.trim().to_string(),
+                                file_path: file_path_str.clone(),
+                                line_number: lnum,
+                            });
+                    }
+
                     Ok(true)
                 }),
             );
@@ -687,7 +776,13 @@ impl TodoExtractor {
         let references = Arc::try_unwrap(all_references)
             .map(|mutex| mutex.into_inner().unwrap())
             .unwrap_or_else(|arc| arc.lock().unwrap().clone());
-        tracing::debug!(directory=%dir.display(), ?references, "Extracted TODO references");
-        Ok(references)
+        let lint_violations = Arc::try_unwrap(lint_violations)
+            .map(|mutex| mutex.into_inner().unwrap())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        tracing::debug!(directory=%dir.display(), ?references, ?lint_violations, "Extracted TODO references");
+        Ok(ExtractionResult {
+            references,
+            lint_violations,
+        })
     }
 }

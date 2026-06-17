@@ -134,9 +134,10 @@ fn test_epic_extraction() {
     fs::write(&test_file, content).expect("Failed to write test file");
 
     let extractor = TodoExtractor::new();
-    let references = extractor
+    let extraction = extractor
         .extract_from_directory(&temp_dir)
         .expect("Failed to extract references");
+    let references = extraction.references;
 
     // Clean up
     let _ = fs::remove_file(&test_file);
@@ -240,8 +241,6 @@ fn test_lint_forbidden_patterns() {
 // TEMP hack
 // TBD figure this out
 // MVP feature
-// TODO without a ticket reference
-// TODO: also bad, colon but no ticket
 // todo lowercase is bad
 // fixme lowercase
 # tbd in a shell comment
@@ -268,14 +267,6 @@ fn test_lint_forbidden_patterns() {
     assert!(
         mvp.map_or(false, |v| !v.is_empty()),
         "Should catch MVP comment"
-    );
-
-    // Should catch TODOs with incorrect syntax
-    let bad_syntax = violations.get(&LintCategory::IncorrectSyntax);
-    assert!(
-        bad_syntax.map_or(false, |v| v.len() >= 2),
-        "Should catch TODO without ticket and TODO: without ticket. Found: {:?}",
-        bad_syntax
     );
 
     // Should catch uncapitalized patterns
@@ -311,6 +302,13 @@ fn test_lint_valid_patterns() {
 // TODO(github.com/owner/repo#456) parenthesized GitHub issue
 // TODO(!789) parenthesized MR
 // TODO(&17) parenthesized epic
+// TODO (#321) parenthesized local issue with spacing
+// TODO (rigetti/qcs/magneto#654) parenthesized GitLab issue with spacing
+// TODO (github.com/owner/repo#987) parenthesized GitHub issue with spacing
+// TODO (!222) parenthesized MR with spacing
+// TODO (&333) parenthesized epic with spacing
+// TODO(#7, #8, github.com/foo/bar#1) parenthesized comma-delimited refs
+// TODO( #9 , rigetti/qcs/magneto#10 , github.com/owner/repo#11 ) parenthesized comma-delimited refs with spacing
 // using todo-curator in a comment is fine
 "#;
 
@@ -343,12 +341,12 @@ fn test_lint_exclude_file_regexes() {
 
     fs::write(
         temp_dir.join("skip_me.rs"),
-        "// TODO without a ticket reference\n",
+        "// todo lower-case should be flagged\n",
     )
     .unwrap();
     fs::write(
         temp_dir.join("include_me.rs"),
-        "// TODO without a ticket reference\n",
+        "// todo lower-case should be flagged\n",
     )
     .unwrap();
 
@@ -358,22 +356,105 @@ fn test_lint_exclude_file_regexes() {
     // Clean up
     let _ = fs::remove_dir_all(&temp_dir);
 
-    let incorrect_syntax = violations
-        .get(&todo_curator::todo::LintCategory::IncorrectSyntax)
+    let uncapitalized = violations
+        .get(&todo_curator::todo::LintCategory::Uncapitalized)
         .cloned()
         .unwrap_or_default();
 
     assert_eq!(
-        incorrect_syntax.len(),
+        uncapitalized.len(),
         1,
         "Expected one lint violation from include_me.rs only. Found: {:#?}",
-        incorrect_syntax
+        uncapitalized
     );
     assert!(
-        incorrect_syntax[0].file_path.contains("include_me.rs"),
+        uncapitalized[0].file_path.contains("include_me.rs"),
         "Expected violation to come from include_me.rs. Got: {:#?}",
-        incorrect_syntax
+        uncapitalized
     );
+}
+
+/// Test that extractor reports TODO lines that do not match any extraction rule.
+#[test]
+fn test_extractor_reports_incorrect_todo_syntax() {
+    use std::fs;
+    use todo_curator::todo::{LintCategory, TodoExtractor};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_extractor_invalid_todo");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO without a ticket reference
+// TODO: still no ticket
+// TODO #123 valid
+"#;
+
+    fs::write(temp_dir.join("bad_todos.rs"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let bad_syntax = extraction
+        .lint_violations
+        .get(&LintCategory::IncorrectSyntax)
+        .cloned()
+        .unwrap_or_default();
+
+    assert_eq!(
+        bad_syntax.len(),
+        2,
+        "Expected two IncorrectSyntax violations from extractor. Found: {:#?}",
+        bad_syntax
+    );
+}
+
+/// Test that multiple TODO matches on a single line are all extracted.
+#[test]
+fn test_extractor_multiple_todos_on_one_line() {
+    use std::fs;
+    use todo_curator::todo::{TodoExtractor, TodoReference};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_multiple_todos_one_line");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO (#7) TODO #18: TODO(#1,#2)
+"#;
+
+    fs::write(temp_dir.join("multi_todo.rs"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let refs: Vec<_> = extraction
+        .references
+        .iter()
+        .filter(|r| r.file_path().contains("multi_todo.rs"))
+        .collect();
+
+    for number in [7_u32, 18_u32, 1_u32, 2_u32] {
+        assert!(
+            refs.iter().any(|r| matches!(
+                r,
+                TodoReference::GitLabIssue {
+                    project: None,
+                    number: n,
+                    ..
+                } if *n == number
+            )),
+            "Should extract local issue #{} from multiple TODOs on one line. Got: {:#?}",
+            number,
+            refs
+        );
+    }
 }
 
 /// Test that TODO(<ref>) form is correctly extracted as references
@@ -394,12 +475,20 @@ fn test_parenthesized_todo_extraction() {
 // TODO(rigetti/qcs/magneto!500) cross-project MR
 // TODO(&600) local epic
 // TODO(rigetti/qcs/services&700) epic with group
+// TODO (#800) local GitLab issue with spacing
+// TODO (rigetti/qcs/magneto#810) cross-project GitLab issue with spacing
+// TODO (github.com/owner/repo#820) GitHub issue with spacing
+// TODO (!830) local MR with spacing
+// TODO (&840) local epic with spacing
+// TODO(#7, #8, github.com/foo/bar#1) comma-delimited refs
+// TODO( #9 , rigetti/qcs/magneto#10 , github.com/owner/repo#11 ) comma-delimited refs with spacing
 "#;
 
     fs::write(temp_dir.join("parens.rs"), content).unwrap();
 
     let extractor = TodoExtractor::new();
-    let references = extractor.extract_from_directory(&temp_dir).unwrap();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+    let references = extraction.references;
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_dir);
@@ -495,6 +584,111 @@ fn test_parenthesized_todo_extraction() {
         "Should extract TODO(rigetti/qcs/services&700). Got: {:#?}",
         refs
     );
+
+    // Local GitLab issue with spacing before parenthesized ref
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue {
+                project: None,
+                number: 800,
+                ..
+            }
+        )),
+        "Should extract TODO (#800). Got: {:#?}",
+        refs
+    );
+
+    // Cross-project GitLab issue with spacing before parenthesized ref
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 810, .. }
+            if p == "rigetti/qcs/magneto"
+        )),
+        "Should extract TODO (rigetti/qcs/magneto#810). Got: {:#?}",
+        refs
+    );
+
+    // GitHub issue with spacing before parenthesized ref
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitHubIssue { repo: Some(repo), number: 820, .. }
+            if repo == "owner/repo"
+        )),
+        "Should extract TODO (github.com/owner/repo#820). Got: {:#?}",
+        refs
+    );
+
+    // Local MR with spacing before parenthesized ref
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabMr {
+                project: None,
+                number: 830,
+                ..
+            }
+        )),
+        "Should extract TODO (!830). Got: {:#?}",
+        refs
+    );
+
+    // Local epic with spacing before parenthesized ref
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabEpic {
+                group: None,
+                number: 840,
+                ..
+            }
+        )),
+        "Should extract TODO (&840). Got: {:#?}",
+        refs
+    );
+
+    // Comma-delimited refs: local GitLab issues #7, #8, #9
+    for number in [7_u32, 8_u32, 9_u32] {
+        assert!(
+            refs.iter().any(|r| matches!(
+                r,
+                TodoReference::GitLabIssue {
+                    project: None,
+                    number: n,
+                    ..
+                } if *n == number
+            )),
+            "Should extract local issue #{} from comma-delimited TODO list. Got: {:#?}",
+            number,
+            refs
+        );
+    }
+
+    // Comma-delimited refs: GitLab rendered issue
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 10, .. }
+            if p == "rigetti/qcs/magneto"
+        )),
+        "Should extract rigetti/qcs/magneto#10 from comma-delimited TODO list. Got: {:#?}",
+        refs
+    );
+
+    // Comma-delimited refs: GitHub shorthand issues
+    for (repo, number) in [("foo/bar", 1_u32), ("owner/repo", 11_u32)] {
+        assert!(
+            refs.iter().any(|r| matches!(
+                r,
+                TodoReference::GitHubIssue { repo: Some(rp), number: n, .. }
+                if rp == repo && *n == number
+            )),
+            "Should extract github.com/{repo}#{number} from comma-delimited TODO list. Got: {:#?}",
+            refs
+        );
+    }
 }
 
 /// Test that GitLab work item URL forms are parsed as GitLab issues.
@@ -515,7 +709,8 @@ fn test_gitlab_work_item_url_extraction() {
     fs::write(temp_dir.join("work_items.rs"), content).unwrap();
 
     let extractor = TodoExtractor::new();
-    let references = extractor.extract_from_directory(&temp_dir).unwrap();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+    let references = extraction.references;
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_dir);

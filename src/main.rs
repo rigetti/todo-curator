@@ -156,7 +156,13 @@ async fn main() -> Result<()> {
                 check_closed_references(path.clone(), &project_detection, &checker).await?;
             let invalid_result =
                 check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
-            closed_result.lint_violations = invalid_result.lint_violations;
+            for (category, mut violations) in invalid_result.lint_violations {
+                closed_result
+                    .lint_violations
+                    .entry(category)
+                    .or_default()
+                    .append(&mut violations);
+            }
 
             // Also run MR check (best-effort: skip if not in MR context)
             let mr_issues: Vec<MrIssue> = find_mr_todos(&path, &project_detection, &checker)
@@ -300,6 +306,28 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
         }
     }
 
+    if !output.warnings.is_empty() {
+        writeln!(
+            writer,
+            "\n{}",
+            "TODO references that can be shortened:".yellow().bold()
+        )?;
+        for warning in &output.warnings {
+            writeln!(
+                writer,
+                "{} -> {}",
+                warning.original.yellow(),
+                warning.suggestion.green()
+            )?;
+            writeln!(
+                writer,
+                "  {}:{}",
+                warning.reference.file_path().bold(),
+                warning.reference.line_number().to_string().bold()
+            )?;
+        }
+    }
+
     if !output.has_errors() {
         writeln!(writer, "{}", "All TODO references are valid.".green())?;
     }
@@ -345,7 +373,8 @@ async fn find_mr_todos(
     let issues = checker.get_current_mr_issues(&project).await?;
 
     let extractor = todo_curator::todo::TodoExtractor::new();
-    let all_references = extractor.extract_from_directory(path)?;
+    let extraction = extractor.extract_from_directory(path)?;
+    let all_references = extraction.references;
 
     let mut mr_issues = Vec::new();
     for issue_num in issues {
