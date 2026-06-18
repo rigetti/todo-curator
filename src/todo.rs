@@ -328,6 +328,7 @@ type ExtractorFn =
 pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
+    exclude_file_regexes: Vec<Regex>,
 }
 
 impl Default for TodoExtractor {
@@ -338,6 +339,10 @@ impl Default for TodoExtractor {
 
 impl TodoExtractor {
     pub fn new() -> Self {
+        Self::with_exclude_file_regexes(&[]).expect("default extractor regexes should compile")
+    }
+
+    pub fn with_exclude_file_regexes(exclude_file_regexes: &[String]) -> anyhow::Result<Self> {
         // Extract TODO reference candidates in two forms:
         // 1) TODO <single-ref>:
         // 2) TODO(<multiple-refs>) or TODO (<multiple-refs>)
@@ -590,10 +595,20 @@ impl TodoExtractor {
             ),
         ];
 
-        Self {
+        let exclude_file_regexes = exclude_file_regexes
+            .iter()
+            .map(|pattern| {
+                Regex::new(pattern).map_err(|e| {
+                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(Self {
             todo_ref_pattern,
             patterns,
-        }
+            exclude_file_regexes,
+        })
     }
 
     fn extract_token_reference(
@@ -619,6 +634,10 @@ impl TodoExtractor {
         None
     }
 
+    fn is_local_only_marker(token: &str) -> bool {
+        token.trim() == "performance"
+    }
+
     pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<ExtractionResult> {
         tracing::debug!(
             "Extracting TODO references from directory: {}",
@@ -635,6 +654,20 @@ impl TodoExtractor {
         for entry in walk_source_files(dir) {
             let path = entry.path();
             tracing::debug!("Processing file: {}", path.display());
+            let relative_file_path_str = path
+                .strip_prefix(dir)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+
+            if self
+                .exclude_file_regexes
+                .iter()
+                .any(|pattern| pattern.is_match(&relative_file_path_str))
+            {
+                continue;
+            }
+
             let refs = all_references.clone();
             let viols = lint_violations.clone();
             let file_path_str = path.to_string_lossy().to_string();
@@ -650,6 +683,11 @@ impl TodoExtractor {
                     for todo_caps in self.todo_ref_pattern.captures_iter(line) {
                         if let Some(single_ref) = todo_caps.name("single_ref") {
                             let single_ref = single_ref.as_str().trim_end_matches(':');
+                            if Self::is_local_only_marker(single_ref) {
+                                line_has_match = true;
+                                continue;
+                            }
+
                             if let Some(reference) =
                                 self.extract_token_reference(single_ref, line, &file_path_str, lnum)
                             {
@@ -661,6 +699,11 @@ impl TodoExtractor {
                         if let Some(multiple_refs) = todo_caps.name("multiple_refs") {
                             for token in multiple_refs.as_str().split(',').map(str::trim) {
                                 if token.is_empty() {
+                                    continue;
+                                }
+
+                                if Self::is_local_only_marker(token) {
+                                    line_has_match = true;
                                     continue;
                                 }
 

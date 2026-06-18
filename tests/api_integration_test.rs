@@ -31,14 +31,90 @@ use todo_curator::{
 };
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
+    run_closed_reference_check_with_excludes(path, &[]).await
+}
+
+async fn run_closed_reference_check_with_excludes(
+    path: PathBuf,
+    exclude_file_regexes: &[String],
+) -> CheckOutput {
     let checker = StatusChecker::new()
         .await
         .expect("Failed to initialize status checker");
     let project_detection = ProjectDetection::None;
 
-    check_closed_references(path, &project_detection, &checker)
+    check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
         .await
         .expect("Failed to check closed references")
+}
+
+#[tokio::test]
+async fn test_excluded_file_regex_skips_closed_reference_checks() {
+    let temp_root = std::env::temp_dir().join("todo_curator_closed_exclude_test");
+    let docs_dir = temp_root.join("docs");
+    let _ = std::fs::remove_dir_all(&temp_root);
+    std::fs::create_dir_all(&docs_dir).expect("Failed to create temp docs dir");
+
+    let test_file = docs_dir.join("todo-comments.md");
+    std::fs::write(
+        &test_file,
+        "TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n",
+    )
+    .expect("Failed to write test file");
+
+    let excludes = vec!["todo-comments.md".to_string()];
+    let result = run_closed_reference_check_with_excludes(temp_root.clone(), &excludes).await;
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+
+    assert!(
+        result.closed.is_empty(),
+        "Excluded file should not contribute closed references. Got: {:?}",
+        result.closed
+    );
+    assert!(
+        result.not_found.is_empty(),
+        "Excluded file should not trigger remote checks. Got: {:?}",
+        result.not_found
+    );
+    assert_eq!(
+        result.status, "success",
+        "Excluded file content should not affect closed-check status"
+    );
+}
+
+/// Test that `performance` TODOs are treated as valid and never sent to remote APIs.
+#[tokio::test]
+async fn test_performance_reference_skips_remote_checks() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_performance_reference.rs");
+    std::fs::write(&test_file, "// TODO performance - local-only marker\n")
+        .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_file.clone()).await;
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file);
+
+    assert!(
+        result.closed.is_empty(),
+        "`performance` should not be checked as a closed remote reference. Got: {:?}",
+        result.closed
+    );
+    assert!(
+        result.not_found.is_empty(),
+        "`performance` should not be checked against remote APIs. Got: {:?}",
+        result.not_found
+    );
+    assert!(
+        result.lint_violations.is_empty(),
+        "`performance` should not create lint violations. Got: {:?}",
+        result.lint_violations
+    );
+    assert_eq!(
+        result.status, "success",
+        "`performance` TODO should produce success status"
+    );
 }
 
 /// Test that the tool correctly identifies an open GitLab issue

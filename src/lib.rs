@@ -72,6 +72,7 @@ pub async fn check_closed_references(
     path: PathBuf,
     project_detection: &checker::ProjectDetection,
     checker: &checker::StatusChecker,
+    exclude_file_regexes: &[String],
 ) -> Result<CheckOutput> {
     match project_detection {
         checker::ProjectDetection::GitLab(project) => {
@@ -85,7 +86,7 @@ pub async fn check_closed_references(
         }
     };
 
-    let extractor = todo::TodoExtractor::new();
+    let extractor = todo::TodoExtractor::with_exclude_file_regexes(exclude_file_regexes)?;
     let extraction = extractor.extract_from_directory(&path)?;
     let references = extraction.references;
 

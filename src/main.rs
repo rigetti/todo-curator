@@ -130,9 +130,11 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
-                ..
+                exclude_file_regex,
             } = args;
-            let result = check_closed_references(path, &project_detection, &checker).await?;
+            let result =
+                check_closed_references(path, &project_detection, &checker, &exclude_file_regex)
+                    .await?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckInvalid { args } => {
@@ -152,8 +154,13 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
-            let mut closed_result =
-                check_closed_references(path.clone(), &project_detection, &checker).await?;
+            let mut closed_result = check_closed_references(
+                path.clone(),
+                &project_detection,
+                &checker,
+                &exclude_file_regex,
+            )
+            .await?;
             let invalid_result =
                 check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
             for (category, mut violations) in invalid_result.lint_violations {
@@ -165,9 +172,10 @@ async fn main() -> Result<()> {
             }
 
             // Also run MR check (best-effort: skip if not in MR context)
-            let mr_issues: Vec<MrIssue> = find_mr_todos(&path, &project_detection, &checker)
-                .await
-                .unwrap_or_default();
+            let mr_issues: Vec<MrIssue> =
+                find_mr_todos(&path, &project_detection, &checker, &exclude_file_regex)
+                    .await
+                    .unwrap_or_default();
 
             if closed_result.has_errors() || !mr_issues.is_empty() {
                 closed_result.status = "failure".to_string();
@@ -192,9 +200,17 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
-                ..
+                exclude_file_regex,
             } = args;
-            check_mr_todos(path, format, output_path, &project_detection, &checker).await?;
+            check_mr_todos(
+                path,
+                format,
+                output_path,
+                &project_detection,
+                &checker,
+                &exclude_file_regex,
+            )
+            .await?;
         }
         Commands::ValidateAuth => unreachable!(),
     }
@@ -357,6 +373,7 @@ async fn find_mr_todos(
     path: &Path,
     project_detection: &ProjectDetection,
     checker: &StatusChecker,
+    exclude_file_regexes: &[String],
 ) -> Result<Vec<MrIssue>> {
     let project = match project_detection {
         ProjectDetection::GitLab(proj) => proj.clone(),
@@ -372,7 +389,8 @@ async fn find_mr_todos(
 
     let issues = checker.get_current_mr_issues(&project).await?;
 
-    let extractor = todo_curator::todo::TodoExtractor::new();
+    let extractor =
+        todo_curator::todo::TodoExtractor::with_exclude_file_regexes(exclude_file_regexes)?;
     let extraction = extractor.extract_from_directory(path)?;
     let all_references = extraction.references;
 
@@ -455,8 +473,9 @@ async fn check_mr_todos(
     output_path: Option<PathBuf>,
     project_detection: &ProjectDetection,
     checker: &StatusChecker,
+    exclude_file_regexes: &[String],
 ) -> Result<()> {
-    let mr_issues = find_mr_todos(&path, project_detection, checker).await?;
+    let mr_issues = find_mr_todos(&path, project_detection, checker, exclude_file_regexes).await?;
 
     let mut output: Box<dyn Write> = if let Some(path) = output_path {
         Box::new(File::create(path)?)
