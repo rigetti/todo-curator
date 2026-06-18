@@ -225,64 +225,54 @@ fn test_directory_scanning() {
     );
 }
 
-/// Test that the linter catches forbidden TODO patterns
+/// Test that check-invalid does not require GitHub/GitLab auth.
 #[test]
-fn test_lint_forbidden_patterns() {
-    use std::fs;
-    use todo_curator::todo::{LintCategory, TodoLinter};
+fn test_check_invalid_skips_auth_validation() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_auth");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
 
-    let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_forbidden");
-    let _ = fs::remove_dir_all(&temp_dir);
-    fs::create_dir_all(&temp_dir).unwrap();
+    let test_file = temp_dir.join("bad.rs");
+    std::fs::write(&test_file, "// TODO without a reference\n").unwrap();
 
-    let content = r#"
-// XXX this is bad
-// FIXME something broken
-// TEMP hack
-// TBD figure this out
-// MVP feature
-// todo lowercase is bad
-// fixme lowercase
-# tbd in a shell comment
-"#;
+    let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
+        .arg("check-invalid")
+        .arg("-p")
+        .arg(&temp_dir)
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GL_TOKEN")
+        .env_remove("RUST_LOG")
+        .current_dir(manifest_dir)
+        .output()
+        .expect("Failed to execute todo-curator");
 
-    fs::write(temp_dir.join("bad.rs"), content).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let linter = TodoLinter::new();
-    let violations = linter.lint_directory(&temp_dir).unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
 
-    // Clean up
-    let _ = fs::remove_dir_all(&temp_dir);
-
-    // Should catch XXX, FIXME, TEMP, TBD (non-mergeable)
-    let non_mergeable = violations.get(&LintCategory::NonMergeable);
     assert!(
-        non_mergeable.map_or(false, |v| v.len() >= 4),
-        "Should catch XXX, FIXME, TEMP, TBD. Found: {:?}",
-        non_mergeable
+        !stderr.contains("auth") && !stderr.contains("token"),
+        "check-invalid should not prompt for auth. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
     );
-
-    // Should catch MVP
-    let mvp = violations.get(&LintCategory::MvpComment);
     assert!(
-        mvp.map_or(false, |v| !v.is_empty()),
-        "Should catch MVP comment"
-    );
-
-    // Should catch uncapitalized patterns
-    let uncap = violations.get(&LintCategory::Uncapitalized);
-    assert!(
-        uncap.map_or(false, |v| v.len() >= 3),
-        "Should catch todo, fixme, tbd lowercase. Found: {:?}",
-        uncap
+        stdout.contains("Improperly-formatted TODO comments:") || stdout.contains("TODO comments referencing"),
+        "Expected invalid TODO output. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
     );
 }
 
-/// Test that valid TODO patterns are NOT flagged by the linter
+/// Test that valid TODO patterns produce no syntax errors during extraction
 #[test]
 fn test_lint_valid_patterns() {
     use std::fs;
-    use todo_curator::todo::TodoLinter;
+    use todo_curator::todo::TodoExtractor;
 
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_valid");
     let _ = fs::remove_dir_all(&temp_dir);
@@ -314,63 +304,64 @@ fn test_lint_valid_patterns() {
 
     fs::write(temp_dir.join("good.rs"), content).unwrap();
 
-    let linter = TodoLinter::new();
-    let violations = linter.lint_directory(&temp_dir).unwrap();
+    let extractor = TodoExtractor::new();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_dir);
 
-    // Filter out violations that come from the "todo-curator" line (should be excluded)
-    // All lines should pass - no violations expected
+    // All lines should pass - no syntax violations expected
     assert!(
-        violations.is_empty(),
-        "Valid TODO patterns should not produce lint violations. Got: {:#?}",
-        violations
+        extraction.lint_violations.is_empty(),
+        "Valid TODO patterns should not produce extraction violations. Got: {:#?}",
+        extraction.lint_violations
     );
 }
 
-/// Test that exclude file regexes skip matching files during linting
+/// Test that exclude file regexes skip matching files during extraction
 #[test]
 fn test_lint_exclude_file_regexes() {
     use std::fs;
-    use todo_curator::todo::TodoLinter;
+    use todo_curator::todo::TodoExtractor;
 
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_exclude");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
+    fs::create_dir_all(&temp_dir.join("skip_dir")).unwrap();
     fs::write(
         temp_dir.join("skip_me.rs"),
-        "// todo lower-case should be flagged\n",
+        "// TODO without a reference\n",
     )
     .unwrap();
     fs::write(
         temp_dir.join("include_me.rs"),
-        "// todo lower-case should be flagged\n",
+        "// TODO without a reference\n",
     )
     .unwrap();
 
-    let linter = TodoLinter::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
-    let violations = linter.lint_directory(&temp_dir).unwrap();
+    let extractor = TodoExtractor::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_dir);
 
-    let uncapitalized = violations
-        .get(&todo_curator::todo::LintCategory::Uncapitalized)
+    let incorrect = extraction
+        .lint_violations
+        .get(&todo_curator::todo::LintCategory::IncorrectSyntax)
         .cloned()
         .unwrap_or_default();
 
     assert_eq!(
-        uncapitalized.len(),
+        incorrect.len(),
         1,
-        "Expected one lint violation from include_me.rs only. Found: {:#?}",
-        uncapitalized
+        "Expected one extraction violation from include_me.rs only. Found: {:#?}",
+        incorrect
     );
     assert!(
-        uncapitalized[0].file_path.contains("include_me.rs"),
+        incorrect[0].file_path.contains("include_me.rs"),
         "Expected violation to come from include_me.rs. Got: {:#?}",
-        uncapitalized
+        incorrect
     );
 }
 

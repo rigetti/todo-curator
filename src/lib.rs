@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use todo::LintViolationMap;
+use todo::{ExtractionResult, LintViolationMap};
 
 /// JSON output format for check results
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,12 +67,17 @@ impl CheckOutput {
     }
 }
 
-/// Check closed references in a directory
-pub async fn check_closed_references(
-    path: PathBuf,
+/// Extract TODO references and lint violations in one pass.
+pub fn extract_todos(path: &Path, exclude_file_regexes: &[String]) -> Result<ExtractionResult> {
+    let extractor = todo::TodoExtractor::with_exclude_file_regexes(exclude_file_regexes)?;
+    extractor.extract_from_directory(path)
+}
+
+/// Project a closed-reference check from a precomputed extraction result.
+pub async fn check_closed_from_extraction(
+    extraction: &ExtractionResult,
     project_detection: &checker::ProjectDetection,
     checker: &checker::StatusChecker,
-    exclude_file_regexes: &[String],
 ) -> Result<CheckOutput> {
     match project_detection {
         checker::ProjectDetection::GitLab(project) => {
@@ -86,38 +91,25 @@ pub async fn check_closed_references(
         }
     };
 
-    let extractor = todo::TodoExtractor::with_exclude_file_regexes(exclude_file_regexes)?;
-    let extraction = extractor.extract_from_directory(&path)?;
-    let references = extraction.references;
+    let references = &extraction.references;
 
     if references.is_empty() {
-        let mut output = CheckOutput::empty_success();
-        output.lint_violations = extraction.lint_violations;
-        if !output.lint_violations.is_empty() {
-            output.status = "failure".to_string();
-        }
-        return Ok(output);
+        return Ok(CheckOutput::empty_success());
     }
 
-    let references_vec: Vec<_> = references.into_iter().collect();
+    let references_vec: Vec<_> = references.iter().cloned().collect();
     let warnings = collect_url_shortening_warnings(project_detection, &references_vec);
     let result = checker
         .check_references(project_detection, &references_vec)
         .await?;
-    let mut output = CheckOutput::from_result(result, extraction.lint_violations);
+    let mut output = CheckOutput::from_result(result, LintViolationMap::new());
     output.warnings = warnings;
     Ok(output)
 }
 
-/// Check for improperly-formatted TODO comments in a directory
-pub fn check_invalid(
-    path: &Path,
-    _project_detection: &checker::ProjectDetection,
-    _checker: &checker::StatusChecker,
-    exclude_file_regexes: &[String],
-) -> Result<CheckOutput> {
-    let linter = todo::TodoLinter::with_exclude_file_regexes(exclude_file_regexes)?;
-    let lint_violations = linter.lint_directory(path)?;
+/// Project an invalid-pattern check from a precomputed extraction result.
+pub fn check_invalid_from_extraction(extraction: &ExtractionResult) -> Result<CheckOutput> {
+    let lint_violations = extraction.lint_violations.clone();
 
     if lint_violations.is_empty() {
         Ok(CheckOutput::empty_success())
@@ -130,6 +122,28 @@ pub fn check_invalid(
             status: "failure".to_string(),
         })
     }
+}
+
+/// Check closed references in a directory.
+pub async fn check_closed_references(
+    path: PathBuf,
+    project_detection: &checker::ProjectDetection,
+    checker: &checker::StatusChecker,
+    exclude_file_regexes: &[String],
+) -> Result<CheckOutput> {
+    let extraction = extract_todos(&path, exclude_file_regexes)?;
+    check_closed_from_extraction(&extraction, project_detection, checker).await
+}
+
+/// Check for improperly-formatted TODO comments in a directory.
+pub fn check_invalid(
+    path: &Path,
+    _project_detection: &checker::ProjectDetection,
+    _checker: &checker::StatusChecker,
+    exclude_file_regexes: &[String],
+) -> Result<CheckOutput> {
+    let extraction = extract_todos(path, exclude_file_regexes)?;
+    check_invalid_from_extraction(&extraction)
 }
 
 fn collect_url_shortening_warnings(

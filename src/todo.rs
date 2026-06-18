@@ -83,128 +83,7 @@ pub struct ExtractionResult {
 struct LintRule {
     category: LintCategory,
     pattern: Regex,
-    /// If set, lines matching pattern are only violations if they do NOT match this regex.
     exclude_pattern: Option<Regex>,
-}
-
-/// Linter that detects improperly-formatted TODO comments.
-pub struct TodoLinter {
-    rules: Vec<LintRule>,
-    exclude_file_regexes: Vec<Regex>,
-}
-
-impl Default for TodoLinter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TodoLinter {
-    pub fn new() -> Self {
-        Self {
-            rules: Self::default_rules(),
-            exclude_file_regexes: Vec::new(),
-        }
-    }
-
-    pub fn with_exclude_file_regexes(exclude_file_regexes: &[String]) -> anyhow::Result<Self> {
-        let exclude_file_regexes = exclude_file_regexes
-            .iter()
-            .map(|pattern| {
-                Regex::new(pattern).map_err(|e| {
-                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        Ok(Self {
-            rules: Self::default_rules(),
-            exclude_file_regexes,
-        })
-    }
-
-    fn default_rules() -> Vec<LintRule> {
-        let rules = vec![
-            LintRule {
-                category: LintCategory::NonMergeable,
-                pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
-                exclude_pattern: None,
-            },
-            LintRule {
-                category: LintCategory::MvpComment,
-                pattern: Regex::new(r"\b(MVP)\b").unwrap(),
-                exclude_pattern: None,
-            },
-            LintRule {
-                category: LintCategory::Uncapitalized,
-                pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
-                exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
-            },
-        ];
-
-        rules
-    }
-
-    pub fn lint_directory(&self, dir: &Path) -> anyhow::Result<LintViolationMap> {
-        let violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
-
-        // Match any line that could contain a violation
-        let combined_pattern =
-            r"\b(XXX|FIXME|TEMP|TBD|MVP)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
-        let matcher = RegexMatcher::new(combined_pattern)?;
-
-        for entry in walk_source_files(dir) {
-            let path = entry.path();
-            let file_path_str = path
-                .strip_prefix(dir)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
-
-            if self
-                .exclude_file_regexes
-                .iter()
-                .any(|pattern| pattern.is_match(&file_path_str))
-            {
-                continue;
-            }
-
-            let viols = violations.clone();
-            let mut searcher = Searcher::new();
-            let _ = searcher.search_path(
-                &matcher,
-                path,
-                UTF8(|lnum, line| {
-                    for rule in &self.rules {
-                        if rule.pattern.is_match(line) {
-                            if let Some(ref exclude) = rule.exclude_pattern {
-                                if exclude.is_match(line) {
-                                    continue;
-                                }
-                            }
-                            viols
-                                .lock()
-                                .unwrap()
-                                .entry(rule.category)
-                                .or_default()
-                                .push(LintViolation {
-                                    category: rule.category,
-                                    source_line: line.trim().to_string(),
-                                    file_path: path.to_string_lossy().to_string(),
-                                    line_number: lnum,
-                                });
-                        }
-                    }
-                    Ok(true)
-                }),
-            );
-        }
-
-        let result = Arc::try_unwrap(violations)
-            .map(|mutex| mutex.into_inner().unwrap())
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
-        Ok(result)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -328,6 +207,7 @@ type ExtractorFn =
 pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
+    lint_rules: Vec<LintRule>,
     exclude_file_regexes: Vec<Regex>,
 }
 
@@ -595,6 +475,24 @@ impl TodoExtractor {
             ),
         ];
 
+        let lint_rules = vec![
+            LintRule {
+                category: LintCategory::NonMergeable,
+                pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
+                exclude_pattern: None,
+            },
+            LintRule {
+                category: LintCategory::MvpComment,
+                pattern: Regex::new(r"\b(MVP)\b").unwrap(),
+                exclude_pattern: None,
+            },
+            LintRule {
+                category: LintCategory::Uncapitalized,
+                pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
+                exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
+            },
+        ];
+
         let exclude_file_regexes = exclude_file_regexes
             .iter()
             .map(|pattern| {
@@ -607,6 +505,7 @@ impl TodoExtractor {
         Ok(Self {
             todo_ref_pattern,
             patterns,
+            lint_rules,
             exclude_file_regexes,
         })
     }
@@ -632,10 +531,6 @@ impl TodoExtractor {
         }
 
         None
-    }
-
-    fn is_local_only_marker(token: &str) -> bool {
-        token.trim() == "performance"
     }
 
     pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<ExtractionResult> {
@@ -680,10 +575,31 @@ impl TodoExtractor {
                 UTF8(|lnum, line| {
                     let mut line_has_match = false;
 
+                    for rule in &self.lint_rules {
+                        if rule.pattern.is_match(line) {
+                            if let Some(ref exclude) = rule.exclude_pattern {
+                                if exclude.is_match(line) {
+                                    continue;
+                                }
+                            }
+                            viols
+                                .lock()
+                                .unwrap()
+                                .entry(rule.category)
+                                .or_default()
+                                .push(LintViolation {
+                                    category: rule.category,
+                                    source_line: line.trim().to_string(),
+                                    file_path: file_path_str.clone(),
+                                    line_number: lnum,
+                                });
+                        }
+                    }
+
                     for todo_caps in self.todo_ref_pattern.captures_iter(line) {
                         if let Some(single_ref) = todo_caps.name("single_ref") {
                             let single_ref = single_ref.as_str().trim_end_matches(':');
-                            if Self::is_local_only_marker(single_ref) {
+                            if single_ref.trim() == "performance" {
                                 line_has_match = true;
                                 continue;
                             }
@@ -702,7 +618,7 @@ impl TodoExtractor {
                                     continue;
                                 }
 
-                                if Self::is_local_only_marker(token) {
+                                if token.trim() == "performance" {
                                     line_has_match = true;
                                     continue;
                                 }

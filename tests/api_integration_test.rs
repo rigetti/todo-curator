@@ -24,6 +24,7 @@
 
 use std::path::PathBuf;
 use todo_curator::{
+    check_closed_from_extraction, check_invalid_from_extraction, extract_todos,
     check_closed_references,
     checker::{ProjectDetection, StatusChecker},
     todo::TodoReference,
@@ -46,6 +47,73 @@ async fn run_closed_reference_check_with_excludes(
     check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
         .await
         .expect("Failed to check closed references")
+}
+
+#[tokio::test]
+async fn test_closed_check_ignores_lint_only_todos() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_closed_check_ignores_lints.rs");
+    std::fs::write(&test_file, "// TODO without a reference\n")
+        .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_file.clone()).await;
+
+    let _ = std::fs::remove_file(&test_file);
+
+    assert!(result.closed.is_empty(), "No closed refs expected");
+    assert!(result.not_found.is_empty(), "No not-found refs expected");
+    assert!(result.lint_violations.is_empty(), "check-closed should ignore lint-only TODOs");
+    assert_eq!(result.status, "success", "check-closed should succeed for lint-only TODOs");
+}
+
+#[tokio::test]
+async fn test_check_all_projection_merges_closed_and_lint_errors() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_check_all_projection.rs");
+    let has_remote_auth = std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
+    let file_content = if has_remote_auth {
+        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n// TODO without a reference\n"
+    } else {
+        "// TODO without a reference\n"
+    };
+    std::fs::write(
+        &test_file,
+        file_content,
+    )
+    .expect("Failed to write test file");
+
+    let extraction = extract_todos(&test_file, &[]).expect("Failed to extract TODOs");
+    let checker = StatusChecker::new()
+        .await
+        .expect("Failed to initialize status checker");
+    let project_detection = ProjectDetection::None;
+
+    let mut closed = check_closed_from_extraction(&extraction, &project_detection, &checker)
+        .await
+        .expect("Failed to project closed check");
+    let invalid = check_invalid_from_extraction(&extraction).expect("Failed to project invalid check");
+
+    let _ = std::fs::remove_file(&test_file);
+
+    for (category, mut violations) in invalid.lint_violations {
+        closed
+            .lint_violations
+            .entry(category)
+            .or_default()
+            .append(&mut violations);
+    }
+
+    if closed.has_errors() {
+        closed.status = "failure".to_string();
+    }
+
+    if has_remote_auth {
+        assert!(!closed.not_found.is_empty(), "check-all should include stale/nonexistent refs");
+    } else {
+        assert!(closed.not_found.is_empty(), "No remote auth means no stale-ref lookup");
+    }
+    assert!(!closed.lint_violations.is_empty(), "check-all should include lint violations");
+    assert_eq!(closed.status, "failure", "check-all should fail when either slice has errors");
 }
 
 #[tokio::test]
