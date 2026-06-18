@@ -149,7 +149,8 @@ impl TodoLinter {
         let violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
 
         // Match any line that could contain a violation
-        let combined_pattern = r"\b(XXX|FIXME|TEMP|TBD|MVP)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
+        let combined_pattern =
+            r"\b(XXX|FIXME|TEMP|TBD|MVP)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
         let matcher = RegexMatcher::new(combined_pattern)?;
 
         for entry in walk_source_files(dir) {
@@ -649,12 +650,9 @@ impl TodoExtractor {
                     for todo_caps in self.todo_ref_pattern.captures_iter(line) {
                         if let Some(single_ref) = todo_caps.name("single_ref") {
                             let single_ref = single_ref.as_str().trim_end_matches(':');
-                            if let Some(reference) = self.extract_token_reference(
-                                single_ref,
-                                line,
-                                &file_path_str,
-                                lnum,
-                            ) {
+                            if let Some(reference) =
+                                self.extract_token_reference(single_ref, line, &file_path_str, lnum)
+                            {
                                 line_has_match = true;
                                 refs.lock().unwrap().insert(reference);
                             }

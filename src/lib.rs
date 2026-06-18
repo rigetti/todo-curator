@@ -282,8 +282,10 @@ mod tests {
             line_number: 10,
         }];
 
-        let warnings =
-            collect_url_shortening_warnings(&checker::ProjectDetection::GitLab("foo/bar/baz".to_string()), &refs);
+        let warnings = collect_url_shortening_warnings(
+            &checker::ProjectDetection::GitLab("foo/bar/baz".to_string()),
+            &refs,
+        );
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].suggestion, "#7");
