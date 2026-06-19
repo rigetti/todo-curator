@@ -170,7 +170,8 @@ async fn main() -> Result<()> {
                 &checker,
             )
             .await?;
-            let invalid_result = check_invalid_from_extraction(&extraction)?;
+            let invalid_result =
+                check_invalid_from_extraction(&extraction, &project_detection)?;
             for (category, mut violations) in invalid_result.lint_violations {
                 closed_result
                     .lint_violations

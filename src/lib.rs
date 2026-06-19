@@ -108,16 +108,21 @@ pub async fn check_closed_from_extraction(
 }
 
 /// Project an invalid-pattern check from a precomputed extraction result.
-pub fn check_invalid_from_extraction(extraction: &ExtractionResult) -> Result<CheckOutput> {
+pub fn check_invalid_from_extraction(
+    extraction: &ExtractionResult,
+    project_detection: &checker::ProjectDetection,
+) -> Result<CheckOutput> {
     let lint_violations = extraction.lint_violations.clone();
+    let references_vec: Vec<_> = extraction.references.iter().cloned().collect();
+    let warnings = collect_url_shortening_warnings(project_detection, &references_vec);
 
-    if lint_violations.is_empty() {
+    if lint_violations.is_empty() && warnings.is_empty() {
         Ok(CheckOutput::empty_success())
     } else {
         Ok(CheckOutput {
             closed: Vec::new(),
             not_found: Vec::new(),
-            warnings: Vec::new(),
+            warnings,
             lint_violations,
             status: "failure".to_string(),
         })
@@ -138,12 +143,12 @@ pub async fn check_closed_references(
 /// Check for improperly-formatted TODO comments in a directory.
 pub fn check_invalid(
     path: &Path,
-    _project_detection: &checker::ProjectDetection,
+    project_detection: &checker::ProjectDetection,
     _checker: &checker::StatusChecker,
     exclude_file_regexes: &[String],
 ) -> Result<CheckOutput> {
     let extraction = extract_todos(path, exclude_file_regexes)?;
-    check_invalid_from_extraction(&extraction)
+    check_invalid_from_extraction(&extraction, project_detection)
 }
 
 fn collect_url_shortening_warnings(

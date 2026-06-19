@@ -235,11 +235,14 @@ impl TodoExtractor {
                 (?:
                     \s+
                     (?P<single_ref>
-                        [^\s()]+          # single ref token up to whitespace
+                        [^\s()]+          # single ref token up to a colon
                     )
                     (?:
-                        \s+               # TODO <ref> with trailing text
-                        |$                 # TODO <ref> at end of line
+                        :                 # must be followed by a colon
+                        (?:
+                            \s+               # 'TODO <ref>:' with trailing text
+                            |$                # 'TODO <ref>:' at end of line
+                        )
                     )
                     |
                     \s*\(
@@ -598,7 +601,7 @@ impl TodoExtractor {
 
                     for todo_caps in self.todo_ref_pattern.captures_iter(line) {
                         if let Some(single_ref) = todo_caps.name("single_ref") {
-                            let single_ref = single_ref.as_str().trim_end_matches(':');
+                            let single_ref = single_ref.as_str();
                             if single_ref.trim() == "performance" {
                                 line_has_match = true;
                                 continue;

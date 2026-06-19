@@ -10,6 +10,30 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use todo_curator::{
+    check_closed_from_extraction, check_closed_references, check_invalid_from_extraction,
+    extract_todos,
+    checker::{ProjectDetection, StatusChecker},
+    CheckOutput,
+};
+
+async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
+    run_closed_reference_check_with_excludes(path, &[]).await
+}
+
+async fn run_closed_reference_check_with_excludes(
+    path: PathBuf,
+    exclude_file_regexes: &[String],
+) -> CheckOutput {
+    let checker = StatusChecker::new()
+        .await
+        .expect("Failed to initialize status checker");
+    let project_detection = ProjectDetection::None;
+
+    check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
+        .await
+        .expect("Failed to check closed references")
+}
 
 /// Integration test that runs the todo-curator binary against the test data
 #[test]
@@ -93,11 +117,11 @@ fn test_todo_extraction_from_data_file() {
 
     // Verify the file contains various TODO formats we want to test
     assert!(
-        content.contains("TODO #4949"),
+        content.contains("TODO #4949:"),
         "Should contain local GitLab issue format"
     );
     assert!(
-        content.contains("TODO github.com/knope-dev/knope#1686"),
+        content.contains("TODO github.com/knope-dev/knope#1686:"),
         "Should contain GitHub shorthand format"
     );
     assert!(
@@ -105,11 +129,11 @@ fn test_todo_extraction_from_data_file() {
         "Should contain GitHub full URL format"
     );
     assert!(
-        content.contains("TODO rigetti/qcs/magneto#229"),
+        content.contains("TODO rigetti/qcs/magneto#229:"),
         "Should contain GitLab rendered format"
     );
     assert!(
-        content.contains("TODO github.com/doesnotexist/knope#1"),
+        content.contains("TODO github.com/doesnotexist/knope#1:"),
         "Should contain non-existent GitHub issue"
     );
 }
@@ -125,10 +149,10 @@ fn test_epic_extraction() {
 
     // Create a test file with various epic formats
     let content = r#"
-// TODO &17 - local epic reference
-// TODO rigetti/qcs/services&42 - epic with group path
-// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/123 - full URL
-// TODO gitlab.com/groups/rigetti/qcs/services/-/epics/456 - URL without schema
+// TODO &17: local epic reference
+// TODO rigetti/qcs/services&42: epic with group path
+// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/123: full URL
+// TODO gitlab.com/groups/rigetti/qcs/services/-/epics/456: URL without schema
 "#;
 
     fs::write(&test_file, content).expect("Failed to write test file");
@@ -268,6 +292,164 @@ fn test_check_invalid_skips_auth_validation() {
     );
 }
 
+#[test]
+fn test_invalid_projection_includes_simplification_warnings() {
+    let temp_dir = std::env::temp_dir().join("todo_curator_invalid_projection_warnings");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+    let test_file = temp_dir.join("sample.rs");
+    std::fs::write(&test_file, "// TODO https://github.com/foo/bar/issues/123\n")
+        .expect("Failed to write test file");
+
+    let extraction = extract_todos(&temp_dir, &[]).expect("Failed to extract TODOs");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let output = check_invalid_from_extraction(&extraction, &ProjectDetection::None)
+        .expect("Failed to project invalid check");
+
+    assert!(output.lint_violations.is_empty(), "Should have no lint violations");
+    assert!(
+        !output.warnings.is_empty(),
+        "check-invalid projection should include simplification warnings"
+    );
+}
+
+#[tokio::test]
+async fn test_closed_check_ignores_lint_only_todos() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_closed_check_ignores_lints.rs");
+    std::fs::write(&test_file, "// TODO without a reference\n")
+        .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_file.clone()).await;
+
+    let _ = std::fs::remove_file(&test_file);
+
+    assert!(result.closed.is_empty(), "No closed refs expected");
+    assert!(result.not_found.is_empty(), "No not-found refs expected");
+    assert!(result.lint_violations.is_empty(), "check-closed should ignore lint-only TODOs");
+    assert_eq!(result.status, "success", "check-closed should succeed for lint-only TODOs");
+}
+
+#[tokio::test]
+async fn test_check_all_projection_merges_closed_and_lint_errors() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_check_all_projection.rs");
+    let has_remote_auth = std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
+    let file_content = if has_remote_auth {
+        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n// TODO without a reference\n"
+    } else {
+        "// TODO without a reference\n"
+    };
+    std::fs::write(
+        &test_file,
+        file_content,
+    )
+    .expect("Failed to write test file");
+
+    let extraction = extract_todos(&test_file, &[]).expect("Failed to extract TODOs");
+    let checker = StatusChecker::new()
+        .await
+        .expect("Failed to initialize status checker");
+    let project_detection = ProjectDetection::None;
+
+    let mut closed = check_closed_from_extraction(&extraction, &project_detection, &checker)
+        .await
+        .expect("Failed to project closed check");
+    let invalid = check_invalid_from_extraction(&extraction, &project_detection)
+        .expect("Failed to project invalid check");
+
+    let _ = std::fs::remove_file(&test_file);
+
+    for (category, mut violations) in invalid.lint_violations {
+        closed
+            .lint_violations
+            .entry(category)
+            .or_default()
+            .append(&mut violations);
+    }
+
+    if closed.has_errors() {
+        closed.status = "failure".to_string();
+    }
+
+    if has_remote_auth {
+        assert!(!closed.not_found.is_empty(), "check-all should include stale/nonexistent refs");
+    } else {
+        assert!(closed.not_found.is_empty(), "No remote auth means no stale-ref lookup");
+    }
+    assert!(!closed.lint_violations.is_empty(), "check-all should include lint violations");
+    assert_eq!(closed.status, "failure", "check-all should fail when either slice has errors");
+}
+
+#[tokio::test]
+async fn test_excluded_file_regex_skips_closed_reference_checks() {
+    let temp_root = std::env::temp_dir().join("todo_curator_closed_exclude_test");
+    let docs_dir = temp_root.join("docs");
+    let _ = std::fs::remove_dir_all(&temp_root);
+    std::fs::create_dir_all(&docs_dir).expect("Failed to create temp docs dir");
+
+    let test_file = docs_dir.join("todo-comments.md");
+    std::fs::write(
+        &test_file,
+        "TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n",
+    )
+    .expect("Failed to write test file");
+
+    let excludes = vec!["todo-comments.md".to_string()];
+    let result = run_closed_reference_check_with_excludes(temp_root.clone(), &excludes).await;
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+
+    assert!(
+        result.closed.is_empty(),
+        "Excluded file should not contribute closed references. Got: {:?}",
+        result.closed
+    );
+    assert!(
+        result.not_found.is_empty(),
+        "Excluded file should not trigger remote checks. Got: {:?}",
+        result.not_found
+    );
+    assert_eq!(
+        result.status, "success",
+        "Excluded file content should not affect closed-check status"
+    );
+}
+
+/// Test that `performance` TODOs are treated as valid and never sent to remote APIs.
+#[tokio::test]
+async fn test_performance_reference_skips_remote_checks() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_performance_reference.rs");
+    std::fs::write(&test_file, "// TODO performance: local-only marker\n")
+        .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_file.clone()).await;
+
+    let _ = std::fs::remove_file(&test_file);
+
+    assert!(
+        result.closed.is_empty(),
+        "`performance` should not be checked as a closed remote reference. Got: {:?}",
+        result.closed
+    );
+    assert!(
+        result.not_found.is_empty(),
+        "`performance` should not be checked against remote APIs. Got: {:?}",
+        result.not_found
+    );
+    assert!(
+        result.lint_violations.is_empty(),
+        "`performance` should not create lint violations. Got: {:?}",
+        result.lint_violations
+    );
+    assert_eq!(
+        result.status, "success",
+        "`performance` TODO should produce success status"
+    );
+}
+
 /// Test that valid TODO patterns produce no syntax errors during extraction
 #[test]
 fn test_lint_valid_patterns() {
@@ -279,14 +461,14 @@ fn test_lint_valid_patterns() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let content = r#"
-// TODO #123
-// TODO rigetti/qcs/magneto#229
-// TODO github.com/owner/repo#456
-// TODO !789
-// TODO rigetti/qcs/magneto!100
-// TODO &17
-// TODO rigetti/qcs/services&42
-// TODO performance - allowed exception
+// TODO #123:
+// TODO rigetti/qcs/magneto#229:
+// TODO github.com/owner/repo#456:
+// TODO !789:
+// TODO rigetti/qcs/magneto!100:
+// TODO &17:
+// TODO rigetti/qcs/services&42:
+// TODO performance: allowed exception
 // TODO(#123) parenthesized local issue
 // TODO(rigetti/qcs/magneto#229) parenthesized GitLab issue
 // TODO(github.com/owner/repo#456) parenthesized GitHub issue
@@ -378,7 +560,7 @@ fn test_extractor_reports_incorrect_todo_syntax() {
     let content = r#"
 // TODO without a ticket reference
 // TODO: still no ticket
-// TODO #123 valid
+// TODO #123: valid
 "#;
 
     fs::write(temp_dir.join("bad_todos.rs"), content).unwrap();

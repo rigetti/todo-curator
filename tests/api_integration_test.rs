@@ -24,7 +24,6 @@
 
 use std::path::PathBuf;
 use todo_curator::{
-    check_closed_from_extraction, check_invalid_from_extraction, extract_todos,
     check_closed_references,
     checker::{ProjectDetection, StatusChecker},
     todo::TodoReference,
@@ -49,142 +48,6 @@ async fn run_closed_reference_check_with_excludes(
         .expect("Failed to check closed references")
 }
 
-#[tokio::test]
-async fn test_closed_check_ignores_lint_only_todos() {
-    let temp_dir = std::env::temp_dir();
-    let test_file = temp_dir.join("test_closed_check_ignores_lints.rs");
-    std::fs::write(&test_file, "// TODO without a reference\n")
-        .expect("Failed to write test file");
-
-    let result = run_closed_reference_check(test_file.clone()).await;
-
-    let _ = std::fs::remove_file(&test_file);
-
-    assert!(result.closed.is_empty(), "No closed refs expected");
-    assert!(result.not_found.is_empty(), "No not-found refs expected");
-    assert!(result.lint_violations.is_empty(), "check-closed should ignore lint-only TODOs");
-    assert_eq!(result.status, "success", "check-closed should succeed for lint-only TODOs");
-}
-
-#[tokio::test]
-async fn test_check_all_projection_merges_closed_and_lint_errors() {
-    let temp_dir = std::env::temp_dir();
-    let test_file = temp_dir.join("test_check_all_projection.rs");
-    let has_remote_auth = std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
-    let file_content = if has_remote_auth {
-        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n// TODO without a reference\n"
-    } else {
-        "// TODO without a reference\n"
-    };
-    std::fs::write(
-        &test_file,
-        file_content,
-    )
-    .expect("Failed to write test file");
-
-    let extraction = extract_todos(&test_file, &[]).expect("Failed to extract TODOs");
-    let checker = StatusChecker::new()
-        .await
-        .expect("Failed to initialize status checker");
-    let project_detection = ProjectDetection::None;
-
-    let mut closed = check_closed_from_extraction(&extraction, &project_detection, &checker)
-        .await
-        .expect("Failed to project closed check");
-    let invalid = check_invalid_from_extraction(&extraction).expect("Failed to project invalid check");
-
-    let _ = std::fs::remove_file(&test_file);
-
-    for (category, mut violations) in invalid.lint_violations {
-        closed
-            .lint_violations
-            .entry(category)
-            .or_default()
-            .append(&mut violations);
-    }
-
-    if closed.has_errors() {
-        closed.status = "failure".to_string();
-    }
-
-    if has_remote_auth {
-        assert!(!closed.not_found.is_empty(), "check-all should include stale/nonexistent refs");
-    } else {
-        assert!(closed.not_found.is_empty(), "No remote auth means no stale-ref lookup");
-    }
-    assert!(!closed.lint_violations.is_empty(), "check-all should include lint violations");
-    assert_eq!(closed.status, "failure", "check-all should fail when either slice has errors");
-}
-
-#[tokio::test]
-async fn test_excluded_file_regex_skips_closed_reference_checks() {
-    let temp_root = std::env::temp_dir().join("todo_curator_closed_exclude_test");
-    let docs_dir = temp_root.join("docs");
-    let _ = std::fs::remove_dir_all(&temp_root);
-    std::fs::create_dir_all(&docs_dir).expect("Failed to create temp docs dir");
-
-    let test_file = docs_dir.join("todo-comments.md");
-    std::fs::write(
-        &test_file,
-        "TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n",
-    )
-    .expect("Failed to write test file");
-
-    let excludes = vec!["todo-comments.md".to_string()];
-    let result = run_closed_reference_check_with_excludes(temp_root.clone(), &excludes).await;
-
-    let _ = std::fs::remove_dir_all(&temp_root);
-
-    assert!(
-        result.closed.is_empty(),
-        "Excluded file should not contribute closed references. Got: {:?}",
-        result.closed
-    );
-    assert!(
-        result.not_found.is_empty(),
-        "Excluded file should not trigger remote checks. Got: {:?}",
-        result.not_found
-    );
-    assert_eq!(
-        result.status, "success",
-        "Excluded file content should not affect closed-check status"
-    );
-}
-
-/// Test that `performance` TODOs are treated as valid and never sent to remote APIs.
-#[tokio::test]
-async fn test_performance_reference_skips_remote_checks() {
-    let temp_dir = std::env::temp_dir();
-    let test_file = temp_dir.join("test_performance_reference.rs");
-    std::fs::write(&test_file, "// TODO performance - local-only marker\n")
-        .expect("Failed to write test file");
-
-    let result = run_closed_reference_check(test_file.clone()).await;
-
-    // Clean up
-    let _ = std::fs::remove_file(&test_file);
-
-    assert!(
-        result.closed.is_empty(),
-        "`performance` should not be checked as a closed remote reference. Got: {:?}",
-        result.closed
-    );
-    assert!(
-        result.not_found.is_empty(),
-        "`performance` should not be checked against remote APIs. Got: {:?}",
-        result.not_found
-    );
-    assert!(
-        result.lint_violations.is_empty(),
-        "`performance` should not create lint violations. Got: {:?}",
-        result.lint_violations
-    );
-    assert_eq!(
-        result.status, "success",
-        "`performance` TODO should produce success status"
-    );
-}
-
 /// Test that the tool correctly identifies an open GitLab issue
 /// Uses issue #1 in rigetti/experimental/kstrand/todo-curator which is kept permanently open
 #[tokio::test]
@@ -198,7 +61,7 @@ async fn test_open_gitlab_issue() {
     let test_file = temp_dir.join("test_open_gitlab_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#1\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#1:\n",
     )
     .expect("Failed to write test file");
 
@@ -237,7 +100,7 @@ async fn test_closed_github_issue() {
     // Create a temporary test file with a TODO referencing a closed issue
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_github_issue.rs");
-    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1\n")
+    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
@@ -290,7 +153,7 @@ async fn test_closed_gitlab_issue() {
     // Create a temporary test file with a TODO referencing a closed issue
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_gitlab_issue.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/magneto#617\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/magneto#617:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
@@ -345,7 +208,7 @@ async fn test_nonexistent_github_issue() {
     let test_file = temp_dir.join("test_nonexistent_github_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n",
+        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n",
     )
     .expect("Failed to write test file");
 
@@ -400,7 +263,7 @@ async fn test_nonexistent_gitlab_issue() {
     let test_file = temp_dir.join("test_nonexistent_gitlab_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#999999\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#999999:\n",
     )
     .expect("Failed to write test file");
 
@@ -461,10 +324,10 @@ async fn test_mixed_issue_states() {
     let test_file = temp_dir.join("test_mixed_issues.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#1 - open GitLab issue\n\
-         // TODO rigetti/qcs/magneto#617 - closed GitLab issue\n\
-         // TODO github.com/rust-lang/rust#1 - closed GitHub issue\n\
-         // TODO github.com/nonexistent-user-xyz/nonexistent-repo-xyz#1 - non-existent\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#1: open GitLab issue\n\
+         // TODO rigetti/qcs/magneto#617: closed GitLab issue\n\
+         // TODO github.com/rust-lang/rust#1: closed GitHub issue\n\
+         // TODO github.com/nonexistent-user-xyz/nonexistent-repo-xyz#1: non-existent\n",
     )
     .expect("Failed to write test file");
 
@@ -556,7 +419,7 @@ async fn test_closed_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/services&16\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&16:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
@@ -610,7 +473,7 @@ async fn test_open_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/experimental&1\n")
+    std::fs::write(&test_file, "// TODO rigetti/experimental&1:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
@@ -701,7 +564,7 @@ async fn test_nonexistent_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
