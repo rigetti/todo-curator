@@ -298,7 +298,7 @@ fn test_invalid_projection_includes_simplification_warnings() {
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
     let test_file = temp_dir.join("sample.rs");
-    std::fs::write(&test_file, "// TODO https://github.com/foo/bar/issues/123\n")
+    std::fs::write(&test_file, "// TODO https://github.com/foo/bar/issues/123:\n")
         .expect("Failed to write test file");
 
     let extraction = extract_todos(&temp_dir, &[]).expect("Failed to extract TODOs");
@@ -875,8 +875,8 @@ fn test_gitlab_work_item_url_extraction() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let content = r#"
-// TODO https://gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/123
-// TODO gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/456
+// TODO https://gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/123:
+// TODO gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/456:
 "#;
 
     fs::write(temp_dir.join("work_items.rs"), content).unwrap();
