@@ -164,14 +164,9 @@ async fn main() -> Result<()> {
                 exclude_file_regex,
             } = args;
             let extraction = extract_todos(&path, &exclude_file_regex)?;
-            let mut closed_result = check_closed_from_extraction(
-                &extraction,
-                &project_detection,
-                &checker,
-            )
-            .await?;
-            let invalid_result =
-                check_invalid_from_extraction(&extraction, &project_detection)?;
+            let mut closed_result =
+                check_closed_from_extraction(&extraction, &project_detection, &checker).await?;
+            let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
             for (category, mut violations) in invalid_result.lint_violations {
                 closed_result
                     .lint_violations
@@ -181,13 +176,10 @@ async fn main() -> Result<()> {
             }
 
             // Also run MR check (best-effort: skip if not in MR context)
-            let mr_issues: Vec<MrIssue> = find_mr_todos(
-                &extraction.references,
-                &project_detection,
-                &checker,
-            )
-            .await
-            .unwrap_or_default();
+            let mr_issues: Vec<MrIssue> =
+                find_mr_todos(&extraction.references, &project_detection, &checker)
+                    .await
+                    .unwrap_or_default();
 
             if closed_result.has_errors() || !mr_issues.is_empty() {
                 closed_result.status = "failure".to_string();

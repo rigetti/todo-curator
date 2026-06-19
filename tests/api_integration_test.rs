@@ -1,4 +1,7 @@
-#![cfg(any(feature = "test-integration-gitlab", feature = "test-integration-github"))]
+#![cfg(any(
+    feature = "test-integration-gitlab",
+    feature = "test-integration-github"
+))]
 //! API integration tests for todo-curator
 //!
 //! These tests make actual API calls to GitHub and GitLab to verify the tool's
@@ -24,12 +27,12 @@
 //! ```
 
 use std::path::PathBuf;
+use todo_curator::todo::TodoReference;
 use todo_curator::{
     check_closed_references,
     checker::{ProjectDetection, StatusChecker},
     CheckOutput,
 };
-use todo_curator::todo::TodoReference;
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
     run_closed_reference_check_with_excludes(path, &[]).await
@@ -517,7 +520,7 @@ async fn test_gitlab_epic_full_url() {
     let test_file = test_dir.join("test.rs");
     std::fs::write(
         &test_file,
-        "// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/16\n",
+        "// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/16:\n",
     )
     .expect("Failed to write test file");
 

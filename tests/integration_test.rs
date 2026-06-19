@@ -12,9 +12,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use todo_curator::{
     check_closed_from_extraction, check_closed_references, check_invalid_from_extraction,
-    extract_todos,
     checker::{ProjectDetection, StatusChecker},
-    CheckOutput,
+    extract_todos, CheckOutput,
 };
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
@@ -285,7 +284,8 @@ fn test_check_invalid_skips_auth_validation() {
         stderr
     );
     assert!(
-        stdout.contains("Improperly-formatted TODO comments:") || stdout.contains("TODO comments referencing"),
+        stdout.contains("Improperly-formatted TODO comments:")
+            || stdout.contains("TODO comments referencing"),
         "Expected invalid TODO output. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
         stdout,
         stderr
@@ -298,8 +298,11 @@ fn test_invalid_projection_includes_simplification_warnings() {
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
     let test_file = temp_dir.join("sample.rs");
-    std::fs::write(&test_file, "// TODO https://github.com/foo/bar/issues/123:\n")
-        .expect("Failed to write test file");
+    std::fs::write(
+        &test_file,
+        "// TODO https://github.com/foo/bar/issues/123:\n",
+    )
+    .expect("Failed to write test file");
 
     let extraction = extract_todos(&temp_dir, &[]).expect("Failed to extract TODOs");
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -307,7 +310,10 @@ fn test_invalid_projection_includes_simplification_warnings() {
     let output = check_invalid_from_extraction(&extraction, &ProjectDetection::None)
         .expect("Failed to project invalid check");
 
-    assert!(output.lint_violations.is_empty(), "Should have no lint violations");
+    assert!(
+        output.lint_violations.is_empty(),
+        "Should have no lint violations"
+    );
     assert!(
         !output.warnings.is_empty(),
         "check-invalid projection should include simplification warnings"
@@ -318,8 +324,7 @@ fn test_invalid_projection_includes_simplification_warnings() {
 async fn test_closed_check_ignores_lint_only_todos() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_check_ignores_lints.rs");
-    std::fs::write(&test_file, "// TODO without a reference\n")
-        .expect("Failed to write test file");
+    std::fs::write(&test_file, "// TODO without a reference\n").expect("Failed to write test file");
 
     let result = run_closed_reference_check(test_file.clone()).await;
 
@@ -327,25 +332,28 @@ async fn test_closed_check_ignores_lint_only_todos() {
 
     assert!(result.closed.is_empty(), "No closed refs expected");
     assert!(result.not_found.is_empty(), "No not-found refs expected");
-    assert!(result.lint_violations.is_empty(), "check-closed should ignore lint-only TODOs");
-    assert_eq!(result.status, "success", "check-closed should succeed for lint-only TODOs");
+    assert!(
+        result.lint_violations.is_empty(),
+        "check-closed should ignore lint-only TODOs"
+    );
+    assert_eq!(
+        result.status, "success",
+        "check-closed should succeed for lint-only TODOs"
+    );
 }
 
 #[tokio::test]
 async fn test_check_all_projection_merges_closed_and_lint_errors() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_check_all_projection.rs");
-    let has_remote_auth = std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
+    let has_remote_auth =
+        std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
     let file_content = if has_remote_auth {
         "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n// TODO without a reference\n"
     } else {
         "// TODO without a reference\n"
     };
-    std::fs::write(
-        &test_file,
-        file_content,
-    )
-    .expect("Failed to write test file");
+    std::fs::write(&test_file, file_content).expect("Failed to write test file");
 
     let extraction = extract_todos(&test_file, &[]).expect("Failed to extract TODOs");
     let checker = StatusChecker::new()
@@ -374,12 +382,24 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
     }
 
     if has_remote_auth {
-        assert!(!closed.not_found.is_empty(), "check-all should include stale/nonexistent refs");
+        assert!(
+            !closed.not_found.is_empty(),
+            "check-all should include stale/nonexistent refs"
+        );
     } else {
-        assert!(closed.not_found.is_empty(), "No remote auth means no stale-ref lookup");
+        assert!(
+            closed.not_found.is_empty(),
+            "No remote auth means no stale-ref lookup"
+        );
     }
-    assert!(!closed.lint_violations.is_empty(), "check-all should include lint violations");
-    assert_eq!(closed.status, "failure", "check-all should fail when either slice has errors");
+    assert!(
+        !closed.lint_violations.is_empty(),
+        "check-all should include lint violations"
+    );
+    assert_eq!(
+        closed.status, "failure",
+        "check-all should fail when either slice has errors"
+    );
 }
 
 #[tokio::test]
@@ -511,18 +531,15 @@ fn test_lint_exclude_file_regexes() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     fs::create_dir_all(&temp_dir.join("skip_dir")).unwrap();
-    fs::write(
-        temp_dir.join("skip_me.rs"),
-        "// TODO without a reference\n",
-    )
-    .unwrap();
+    fs::write(temp_dir.join("skip_me.rs"), "// TODO without a reference\n").unwrap();
     fs::write(
         temp_dir.join("include_me.rs"),
         "// TODO without a reference\n",
     )
     .unwrap();
 
-    let extractor = TodoExtractor::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
+    let extractor =
+        TodoExtractor::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
     let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
 
     // Clean up
