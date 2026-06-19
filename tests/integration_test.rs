@@ -930,3 +930,59 @@ fn test_gitlab_work_item_url_extraction() {
         refs
     );
 }
+
+/// Test shorthand disambiguation: owner/repo#N is GitLab-style, github.com/owner/repo#N is GitHub-style.
+#[test]
+fn test_cross_project_shorthand_disambiguation() {
+    use std::fs;
+    use todo_curator::todo::{TodoExtractor, TodoReference};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_cross_project_shorthand_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO owner/repo#7: rendered shorthand resolves as GitLab issue
+// TODO github.com/owner/repo#7: explicit GitHub shorthand
+"#;
+
+    fs::write(temp_dir.join("shorthand.rs"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        extraction.lint_violations.is_empty(),
+        "Expected no lint violations. Got: {:#?}",
+        extraction.lint_violations
+    );
+
+    let refs: Vec<_> = extraction
+        .references
+        .iter()
+        .filter(|r| r.file_path().contains("shorthand.rs"))
+        .collect();
+
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitLabIssue { project: Some(p), number: 7, .. }
+            if p == "owner/repo"
+        )),
+        "owner/repo#7 should parse as GitLabIssue. Got: {:#?}",
+        refs
+    );
+
+    assert!(
+        refs.iter().any(|r| matches!(
+            r,
+            TodoReference::GitHubIssue { repo: Some(p), number: 7, .. }
+            if p == "owner/repo"
+        )),
+        "github.com/owner/repo#7 should parse as GitHubIssue. Got: {:#?}",
+        refs
+    );
+}
