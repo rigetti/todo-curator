@@ -1,3 +1,7 @@
+#![cfg(any(
+    feature = "test-integration-gitlab",
+    feature = "test-integration-github"
+))]
 //! API integration tests for todo-curator
 //!
 //! These tests make actual API calls to GitHub and GitLab to verify the tool's
@@ -23,20 +27,27 @@
 //! ```
 
 use std::path::PathBuf;
+use todo_curator::todo::TodoReferenceKind;
 use todo_curator::{
     check_closed_references,
     checker::{ProjectDetection, StatusChecker},
-    todo::TodoReference,
     CheckOutput,
 };
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
+    run_closed_reference_check_with_excludes(path, &[]).await
+}
+
+async fn run_closed_reference_check_with_excludes(
+    path: PathBuf,
+    exclude_file_regexes: &[String],
+) -> CheckOutput {
     let checker = StatusChecker::new()
         .await
         .expect("Failed to initialize status checker");
     let project_detection = ProjectDetection::None;
 
-    check_closed_references(path, &project_detection, &checker)
+    check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
         .await
         .expect("Failed to check closed references")
 }
@@ -54,7 +65,7 @@ async fn test_open_gitlab_issue() {
     let test_file = temp_dir.join("test_open_gitlab_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#1\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#1:\n",
     )
     .expect("Failed to write test file");
 
@@ -93,7 +104,7 @@ async fn test_closed_github_issue() {
     // Create a temporary test file with a TODO referencing a closed issue
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_github_issue.rs");
-    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1\n")
+    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
@@ -117,8 +128,8 @@ async fn test_closed_github_issue() {
 
     // Verify the specific issue is rust-lang/rust#1
     let closed_issue = &result.closed[0];
-    match &closed_issue.reference {
-        TodoReference::GitHubIssue { repo, number, .. } => {
+    match &closed_issue.reference.kind {
+        TodoReferenceKind::GitHubIssue { repo, number, .. } => {
             assert_eq!(
                 repo.as_deref(),
                 Some("rust-lang/rust"),
@@ -146,7 +157,7 @@ async fn test_closed_gitlab_issue() {
     // Create a temporary test file with a TODO referencing a closed issue
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_gitlab_issue.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/magneto#617\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/magneto#617:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references directly
@@ -170,8 +181,8 @@ async fn test_closed_gitlab_issue() {
 
     // Verify the specific issue is rigetti/qcs/magneto#617
     let closed_issue = &result.closed[0];
-    match &closed_issue.reference {
-        TodoReference::GitLabIssue {
+    match &closed_issue.reference.kind {
+        TodoReferenceKind::GitLabIssue {
             project, number, ..
         } => {
             assert_eq!(
@@ -201,7 +212,7 @@ async fn test_nonexistent_github_issue() {
     let test_file = temp_dir.join("test_nonexistent_github_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999\n",
+        "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n",
     )
     .expect("Failed to write test file");
 
@@ -226,8 +237,8 @@ async fn test_nonexistent_github_issue() {
 
     // Verify the specific issue is nonexistent-user-12345/nonexistent-repo-67890#99999
     let not_found_issue = &result.not_found[0];
-    match &not_found_issue.reference {
-        TodoReference::GitHubIssue { repo, number, .. } => {
+    match &not_found_issue.reference.kind {
+        TodoReferenceKind::GitHubIssue { repo, number, .. } => {
             assert_eq!(
                 repo.as_deref(),
                 Some("nonexistent-user-12345/nonexistent-repo-67890"),
@@ -256,7 +267,7 @@ async fn test_nonexistent_gitlab_issue() {
     let test_file = temp_dir.join("test_nonexistent_gitlab_issue.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#999999\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#999999:\n",
     )
     .expect("Failed to write test file");
 
@@ -281,8 +292,8 @@ async fn test_nonexistent_gitlab_issue() {
 
     // Verify the specific issue is rigetti/experimental/kstrand/todo-curator#999999
     let not_found_issue = &result.not_found[0];
-    match &not_found_issue.reference {
-        TodoReference::GitLabIssue {
+    match &not_found_issue.reference.kind {
+        TodoReferenceKind::GitLabIssue {
             project, number, ..
         } => {
             assert_eq!(
@@ -317,10 +328,10 @@ async fn test_mixed_issue_states() {
     let test_file = temp_dir.join("test_mixed_issues.rs");
     std::fs::write(
         &test_file,
-        "// TODO rigetti/experimental/kstrand/todo-curator#1 - open GitLab issue\n\
-         // TODO rigetti/qcs/magneto#617 - closed GitLab issue\n\
-         // TODO github.com/rust-lang/rust#1 - closed GitHub issue\n\
-         // TODO github.com/nonexistent-user-xyz/nonexistent-repo-xyz#1 - non-existent\n",
+        "// TODO rigetti/experimental/kstrand/todo-curator#1: open GitLab issue\n\
+         // TODO rigetti/qcs/magneto#617: closed GitLab issue\n\
+         // TODO github.com/rust-lang/rust#1: closed GitHub issue\n\
+         // TODO github.com/nonexistent-user-xyz/nonexistent-repo-xyz#1: non-existent\n",
     )
     .expect("Failed to write test file");
 
@@ -342,13 +353,13 @@ async fn test_mixed_issue_states() {
     let mut found_github = false;
     let mut found_gitlab = false;
     for closed_ref in &result.closed {
-        match &closed_ref.reference {
-            TodoReference::GitHubIssue { repo, number, .. } => {
+        match &closed_ref.reference.kind {
+            TodoReferenceKind::GitHubIssue { repo, number, .. } => {
                 if repo.as_deref() == Some("rust-lang/rust") && number == &1 {
                     found_github = true;
                 }
             }
-            TodoReference::GitLabIssue {
+            TodoReferenceKind::GitLabIssue {
                 project, number, ..
             } => {
                 if project.as_deref() == Some("rigetti/qcs/magneto") && number == &617 {
@@ -377,8 +388,8 @@ async fn test_mixed_issue_states() {
 
     // Verify specific non-existent issue
     let not_found_ref = &result.not_found[0];
-    match &not_found_ref.reference {
-        TodoReference::GitHubIssue { repo, number, .. } => {
+    match &not_found_ref.reference.kind {
+        TodoReferenceKind::GitHubIssue { repo, number, .. } => {
             assert_eq!(
                 repo.as_deref(),
                 Some("nonexistent-user-xyz/nonexistent-repo-xyz"),
@@ -412,7 +423,7 @@ async fn test_closed_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/services&16\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&16:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
@@ -435,8 +446,8 @@ async fn test_closed_gitlab_epic() {
     );
 
     let closed_epic = &result.closed[0];
-    match &closed_epic.reference {
-        TodoReference::GitLabEpic { group, number, .. } => {
+    match &closed_epic.reference.kind {
+        TodoReferenceKind::GitLabEpic { group, number, .. } => {
             assert_eq!(
                 group.as_deref(),
                 Some("rigetti/qcs/services"),
@@ -466,7 +477,7 @@ async fn test_open_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/experimental&1\n")
+    std::fs::write(&test_file, "// TODO rigetti/experimental&1:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
@@ -509,7 +520,7 @@ async fn test_gitlab_epic_full_url() {
     let test_file = test_dir.join("test.rs");
     std::fs::write(
         &test_file,
-        "// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/16\n",
+        "// TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/16:\n",
     )
     .expect("Failed to write test file");
 
@@ -527,8 +538,8 @@ async fn test_gitlab_epic_full_url() {
     );
 
     let closed_epic = &result.closed[0];
-    match &closed_epic.reference {
-        TodoReference::GitLabEpic { group, number, .. } => {
+    match &closed_epic.reference.kind {
+        TodoReferenceKind::GitLabEpic { group, number, .. } => {
             assert_eq!(
                 group.as_deref(),
                 Some("rigetti/qcs/services"),
@@ -557,7 +568,7 @@ async fn test_nonexistent_gitlab_epic() {
     std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
 
     let test_file = test_dir.join("test.rs");
-    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999\n")
+    std::fs::write(&test_file, "// TODO rigetti/qcs/services&999999:\n")
         .expect("Failed to write test file");
 
     // Call check_closed_references with the directory path
@@ -576,8 +587,8 @@ async fn test_nonexistent_gitlab_epic() {
     // Verify the specific epic is rigetti/qcs/services&999999
     let not_found_epic = result.not_found.iter().find(|n| {
         matches!(
-            &n.reference,
-            TodoReference::GitLabEpic { group, number, .. }
+            &n.reference.kind,
+            TodoReferenceKind::GitLabEpic { group, number, .. }
             if group.as_deref() == Some("rigetti/qcs/services") && *number == 999999
         )
     });

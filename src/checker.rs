@@ -1,4 +1,4 @@
-use crate::todo::TodoReference;
+use crate::todo::{TodoReference, TodoReferenceKind};
 use anyhow::{Context, Result};
 use gitlab::api::projects::{issues, merge_requests};
 use gitlab::api::AsyncQuery;
@@ -12,6 +12,26 @@ pub enum ProjectDetection {
     None,
     GitHub(String),
     GitLab(String),
+}
+
+impl ProjectDetection {
+    /// Return true when this detection is GitLab and the project path matches exactly.
+    pub fn matches_gitlab(&self, project_path: &str) -> bool {
+        match self {
+            Self::GitLab(project) => project == project_path,
+            _ => false,
+        }
+    }
+
+    /// Return true when this detection is GitLab and its parent group matches the expected group.
+    pub fn parent_group_matches(&self, group_path: &str) -> bool {
+        match self {
+            Self::GitLab(project) => project
+                .rsplit_once('/')
+                .is_some_and(|(parent, _)| parent == group_path),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -321,27 +341,27 @@ impl StatusChecker {
         default_project: &ProjectDetection,
         reference: &TodoReference,
     ) -> Result<Option<ClosedReference>> {
-        match reference {
-            TodoReference::GitLabIssue {
+        match &reference.kind {
+            TodoReferenceKind::GitLabIssue {
                 project, number, ..
             } => {
                 self.check_gitlab_issue(default_project, reference, project.as_deref(), *number)
                     .await
             }
-            TodoReference::GitHubIssue { repo, number, .. } => {
+            TodoReferenceKind::GitHubIssue { repo, number, .. } => {
                 self.check_github_issue(default_project, reference, repo.as_deref(), *number)
                     .await
             }
-            TodoReference::GitLabMr {
+            TodoReferenceKind::GitLabMr {
                 project, number, ..
             } => {
                 self.check_gitlab_mr(default_project, reference, project.as_deref(), *number)
                     .await
             }
-            TodoReference::GitHubPr { repo, number, .. } => {
+            TodoReferenceKind::GitHubPr { repo, number, .. } => {
                 self.check_github_pr(reference, repo, *number).await
             }
-            TodoReference::GitLabEpic { group, number, .. } => {
+            TodoReferenceKind::GitLabEpic { group, number, .. } => {
                 self.check_gitlab_epic(default_project, reference, group.as_deref(), *number)
                     .await
             }

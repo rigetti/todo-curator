@@ -4,11 +4,12 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 use todo_curator::{
-    check_closed_references, check_invalid, checker::ProjectDetection, checker::StatusChecker,
-    CheckOutput,
+    check_closed_from_extraction, check_closed_references, check_invalid,
+    check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
+    extract_todos, CheckOutput,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -122,7 +123,15 @@ async fn main() -> Result<()> {
     };
 
     let checker = StatusChecker::new().await?;
-    checker.check_auth()?;
+
+    let needs_auth = matches!(
+        cli.command,
+        Commands::CheckClosed { .. } | Commands::CheckAll { .. } | Commands::CheckMrTodos { .. }
+    );
+
+    if needs_auth {
+        checker.check_auth()?;
+    }
 
     match cli.command {
         Commands::CheckClosed { args } => {
@@ -130,9 +139,11 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
-                ..
+                exclude_file_regex,
             } = args;
-            let result = check_closed_references(path, &project_detection, &checker).await?;
+            let result =
+                check_closed_references(path, &project_detection, &checker, &exclude_file_regex)
+                    .await?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckInvalid { args } => {
@@ -152,16 +163,23 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let extraction = extract_todos(&path, &exclude_file_regex)?;
             let mut closed_result =
-                check_closed_references(path.clone(), &project_detection, &checker).await?;
-            let invalid_result =
-                check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
-            closed_result.lint_violations = invalid_result.lint_violations;
+                check_closed_from_extraction(&extraction, &project_detection, &checker).await?;
+            let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
+            for (category, mut violations) in invalid_result.lint_violations {
+                closed_result
+                    .lint_violations
+                    .entry(category)
+                    .or_default()
+                    .append(&mut violations);
+            }
 
             // Also run MR check (best-effort: skip if not in MR context)
-            let mr_issues: Vec<MrIssue> = find_mr_todos(&path, &project_detection, &checker)
-                .await
-                .unwrap_or_default();
+            let mr_issues: Vec<MrIssue> =
+                find_mr_todos(&extraction.references, &project_detection, &checker)
+                    .await
+                    .unwrap_or_default();
 
             if closed_result.has_errors() || !mr_issues.is_empty() {
                 closed_result.status = "failure".to_string();
@@ -186,9 +204,17 @@ async fn main() -> Result<()> {
                 path,
                 format,
                 output: output_path,
-                ..
+                exclude_file_regex,
             } = args;
-            check_mr_todos(path, format, output_path, &project_detection, &checker).await?;
+            let extraction = extract_todos(&path, &exclude_file_regex)?;
+            check_mr_todos(
+                &extraction.references,
+                format,
+                output_path,
+                &project_detection,
+                &checker,
+            )
+            .await?;
         }
         Commands::ValidateAuth => unreachable!(),
     }
@@ -300,6 +326,28 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
         }
     }
 
+    if !output.warnings.is_empty() {
+        writeln!(
+            writer,
+            "\n{}",
+            "TODO references that can be shortened:".yellow().bold()
+        )?;
+        for warning in &output.warnings {
+            writeln!(
+                writer,
+                "{} -> {}",
+                warning.original.yellow(),
+                warning.suggestion.green()
+            )?;
+            writeln!(
+                writer,
+                "  {}:{}",
+                warning.reference.file_path().bold(),
+                warning.reference.line_number().to_string().bold()
+            )?;
+        }
+    }
+
     if !output.has_errors() {
         writeln!(writer, "{}", "All TODO references are valid.".green())?;
     }
@@ -326,7 +374,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
 }
 
 async fn find_mr_todos(
-    path: &Path,
+    references: &std::collections::HashSet<todo_curator::todo::TodoReference>,
     project_detection: &ProjectDetection,
     checker: &StatusChecker,
 ) -> Result<Vec<MrIssue>> {
@@ -344,15 +392,12 @@ async fn find_mr_todos(
 
     let issues = checker.get_current_mr_issues(&project).await?;
 
-    let extractor = todo_curator::todo::TodoExtractor::new();
-    let all_references = extractor.extract_from_directory(path)?;
-
     let mut mr_issues = Vec::new();
     for issue_num in issues {
-        let matching_refs: Vec<_> = all_references
+        let matching_refs: Vec<_> = references
             .iter()
-            .filter(|r| match r {
-                todo_curator::todo::TodoReference::GitLabIssue {
+            .filter(|r| match &r.kind {
+                todo_curator::todo::TodoReferenceKind::GitLabIssue {
                     project: None,
                     number,
                     ..
@@ -421,13 +466,13 @@ fn print_mr_text_output<W: Write + ?Sized>(
 }
 
 async fn check_mr_todos(
-    path: PathBuf,
+    references: &std::collections::HashSet<todo_curator::todo::TodoReference>,
     format: OutputFormat,
     output_path: Option<PathBuf>,
     project_detection: &ProjectDetection,
     checker: &StatusChecker,
 ) -> Result<()> {
-    let mr_issues = find_mr_todos(&path, project_detection, checker).await?;
+    let mr_issues = find_mr_todos(references, project_detection, checker).await?;
 
     let mut output: Box<dyn Write> = if let Some(path) = output_path {
         Box::new(File::create(path)?)
