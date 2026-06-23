@@ -2,175 +2,56 @@
 
 A Rust tool to check TODO comments against issue and merge request status across GitHub and GitLab repositories.
 
-This tool replaces the bash scripts `check-todos-closed-issues.sh` and `check-mr-issues.sh` with a more robust, maintainable Rust implementation using native API clients.
+## Authentication
 
-## Features
+To check for stale references, you need API tokens for GitHub and GitLab.
 
-- **Multi-platform support**: Works with both GitHub and GitLab via native API clients
-- **Multiple reference formats**: Supports full URLs, rendered format (owner/repo#123), and local references (#123)
-- **Two checking modes**:
-  - `check-closed`: Find TODO comments referencing closed issues or merged/closed MRs/PRs
-  - `check-mr-todos`: Find TODO comments that reference issues closed by the current MR
-- **No CLI dependencies**: Uses `octocrab` for GitHub and `gitlab` crate for GitLab APIs directly
+If you have `glab` and `gh` installed and authenticated,
+you can use `scripts/autoauth-todo-curator.sh` to run `todo-curator` (if it's on the `PATH`),
+which will automatically use `glab` and `gh` for authentication.
 
-## Prerequisites
+For local development, you can source `auth-setup.sh` before running the API integration tests.
+The tests for each forge are not run unless corresponding feature flag,
+`test-integration-github` or `test-integration-gitlab`, is enabled.
 
-You need API tokens for GitHub and GitLab:
+## Supported TODO Formats
 
-### GitHub Authentication
+In each pattern, `#ref` must be a valid reference (see supported formats below).
 
-Create a personal access token at https://github.com/settings/tokens with `repo` scope, then set:
+- single reference: `TODO(#ref)`
+  - a space after `TODO` is permitted.
+- alternate: `TODO #ref:`
+- multiple references: `TODO(#ref, #ref, #ref)`
+  - multiple references are not supported without parentheses.
 
-```bash
-export GH_TOKEN="your_github_token_here"
-```
+## Supported reference formats
 
-### GitLab Authentication
+### GitLab only
 
-Create a personal access token at your GitLab instance (Settings → Access Tokens) with `api` scope, then set:
+- work-item in the current repo: `#123`
+- work-item in another repo: `group/subgroup/repo#123`
+- merge request for the current repo: `!123`
+- merge request in another repo: `group/subgroup/repo!123`
+- epic under the current project's supgroup: `&123`
+  - this uses the "most specific" path, i.e. for `group/sub1/sub2/project`,
+    the short-form epic reference only checks for epics in `group/sub1/sub2`.
+- full path to an epic: `group/subgroup&123`
 
-```bash
-export GITLAB_TOKEN="your_gitlab_token_here"
-# Optional: if using self-hosted GitLab
-export GITLAB_URL="https://gitlab.example.com"  # defaults to https://gitlab.com
-```
+### GitHub and GitLab
 
-## Usage
+- Full URL: `https://gitlab.com/group/subgroup/repo/-/issues/123`
+  - Schema is optional (the reference can start with `gitlab.com` or `github.com`).
+  - This works for GitLab work-items, merge-requests, and epics, and for GitHub issues and pull-requests.
+- Shortened URL: `github.com/owner/repo#7`
 
-### Check for TODOs referencing closed issues/MRs
+## URL-shortening warnings
 
-```bash
-todo-curator check-closed [--path <directory>]
-```
+The "short" versions of references are generally preferred.
 
-This command scans the specified directory (default: current directory) for TODO comments that reference closed issues or merged/closed MRs/PRs. If any are found, it exits with status 1.
-
-**Example:**
-```bash
-export GH_TOKEN="ghp_..."
-export GITLAB_TOKEN="glpat-..."
-
-cd ~/workspace/my-project
-todo-curator check-closed
-```
-
-### Check for TODOs that should be removed when MR closes
-
-```bash
-todo-curator check-mr-todos [--path <directory>] --project <gitlab-project-path>
-```
-
-This command checks if there are TODO comments referencing issues that will be closed by the current GitLab MR. This helps ensure you remove TODOs when their associated issues are resolved.
-
-The `--project` flag (or `GITLAB_PROJECT` environment variable) specifies the GitLab project path (e.g., `group/subgroup/repo`).
-
-**Example:**
-```bash
-export GITLAB_TOKEN="glpat-..."
-export GITLAB_PROJECT="mygroup/myrepo"
-
-cd ~/workspace/my-project
-todo-curator check-mr-todos
-
-# Or specify project directly:
-todo-curator check-mr-todos --project mygroup/myrepo
-```
-
-## Supported TODO Reference Formats
-
-### GitLab Issues
-- Local: `TODO #123`
-- Full URL: `TODO https://gitlab.com/group/subgroup/repo/-/issues/123`
-- Without schema: `TODO gitlab.com/group/subgroup/repo/-/issues/123`
-- Rendered: `TODO group/subgroup/repo#123`
-
-### GitHub Issues
-- Full URL: `TODO https://github.com/owner/repo/issues/123`
-- Without schema: `TODO github.com/owner/repo/issues/123`
-
-### GitLab Merge Requests
-- Local: `TODO !123`
-- Full URL: `TODO https://gitlab.com/group/subgroup/repo/-/merge_requests/123`
-- Without schema: `TODO gitlab.com/group/subgroup/repo/-/merge_requests/123`
-- Rendered: `TODO group/subgroup/repo!123`
-
-### GitHub Pull Requests
-- Full URL: `TODO https://github.com/owner/repo/pull/123`
-- Without schema: `TODO github.com/owner/repo/pull/123`
-
-## Exit Codes
-
-- `0`: Success (no issues found)
-- `1`: Found TODO comments referencing closed issues/MRs, or authentication failed
+When `todo-curator` encounters full URLs,
+it prints `TODO references that can be shortened` with a suggested shorter form.
 
 ## Integration with CI/CD
 
-Add to your GitLab CI pipeline:
-
-```yaml
-check-todos:
-  stage: test
-  variables:
-    GH_TOKEN: $GH_TOKEN  # Set in CI/CD variables
-    GITLAB_TOKEN: $GITLAB_TOKEN  # Set in CI/CD variables
-  script:
-    - todo-curator check-closed
-  allow_failure: false
-
-check-mr-todos:
-  stage: test
-  variables:
-    GITLAB_TOKEN: $GITLAB_TOKEN
-    GITLAB_PROJECT: $CI_PROJECT_PATH  # Automatically set by GitLab CI
-  script:
-    - todo-curator check-mr-todos
-  only:
-    - merge_requests
-  allow_failure: false
-```
-
-**Note**: Store `GH_TOKEN` and `GITLAB_TOKEN` as masked CI/CD variables in your GitLab project settings.
-
-## Development
-
-```bash
-# Run tests
-cargo test
-
-# Run with logging
-RUST_LOG=debug cargo run -- check-closed
-
-# Format code
-cargo fmt
-
-# Lint
-cargo clippy
-```
-
-## Migrating from Bash Scripts
-
-This tool replaces:
-- `check-todos-closed-issues.sh` → `todo-curator check-closed`
-- `check-mr-issues.sh` → `todo-curator check-mr-todos`
-
-The Rust implementation provides:
-- **Native API clients**: No dependency on `gh` or `glab` CLI tools
-- **Better error handling**: Type-safe API interactions
-- **Clearer output**: Colored messages for better readability
-- **More maintainable**: Pure Rust with well-defined types
-- **Faster execution**: Direct API calls without subprocess overhead
-- **Type safety**: Compile-time guarantees
-
-### Migration Steps
-
-1. **Install the tool**: `cargo install --path .`
-2. **Set up API tokens**: Replace CLI authentication with environment variables
-   ```bash
-   # Instead of: gh auth login
-   export GH_TOKEN="ghp_..."
-   
-   # Instead of: glab auth login
-   export GITLAB_TOKEN="glpat-..."
-   ```
-3. **Update scripts**: Replace bash script calls with `todo-curator` commands
-4. **Update CI/CD**: Add token variables to your CI/CD configuration
+Use the job templates from `qcs-infrastructure`.
+See `https://gitlab.com/rigetti/qcs/utilities/rust-template/-/blob/main/.gitlab-ci.yml?ref_type=heads`.

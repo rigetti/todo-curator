@@ -9,6 +9,8 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::{checker::ProjectDetection, ReferenceWarning};
+
 /// Walk source files in a directory, respecting `.gitignore` and standard filters.
 /// Yields only regular files (skips directories, symlinks, errors).
 fn walk_source_files(dir: &Path) -> impl Iterator<Item = DirEntry> {
@@ -73,51 +75,508 @@ pub struct LintViolation {
 /// A map of lint violations grouped by category.
 pub type LintViolationMap = HashMap<LintCategory, Vec<LintViolation>>;
 
+/// Result of TODO extraction, including parsed references and syntax violations.
+#[derive(Debug, Default)]
+pub struct ExtractionResult {
+    pub references: HashSet<TodoReference>,
+    pub lint_violations: LintViolationMap,
+}
+
 struct LintRule {
     category: LintCategory,
     pattern: Regex,
-    /// If set, lines matching pattern are only violations if they do NOT match this regex.
     exclude_pattern: Option<Regex>,
 }
 
-/// Linter that detects improperly-formatted TODO comments.
-pub struct TodoLinter {
-    rules: Vec<LintRule>,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TodoReferenceKind {
+    GitLabIssue {
+        project: Option<String>,
+        number: u32,
+    },
+    GitHubIssue {
+        repo: Option<String>,
+        number: u32,
+    },
+    GitLabMr {
+        project: Option<String>,
+        number: u32,
+    },
+    GitHubPr {
+        repo: String,
+        number: u32,
+    },
+    GitLabEpic {
+        group: Option<String>,
+        number: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TodoReference {
+    pub kind: TodoReferenceKind,
+    pub source_line: String,
+    pub file_path: String,
+    pub line_number: u64,
+    /// String token as matched from the TODO reference segment.
+    pub original_reference: String,
+    /// Suggested shorter format for URL-form references; `None` if already in preferred form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_format: Option<String>,
+}
+
+impl TodoReference {
+    pub fn new(
+        kind: TodoReferenceKind,
+        source_line: &str,
+        file_path: &str,
+        line_number: u64,
+        original_reference: &str,
+        recommended_format: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            source_line: source_line.trim().to_string(),
+            file_path: file_path.to_string(),
+            line_number,
+            original_reference: original_reference.to_string(),
+            recommended_format,
+        }
+    }
+
+    pub fn display(&self) -> String {
+        match &self.kind {
+            TodoReferenceKind::GitLabIssue {
+                project: None,
+                number,
+                ..
+            } => format!("#{}", number),
+            TodoReferenceKind::GitLabIssue {
+                project: Some(p),
+                number,
+                ..
+            } => format!("{}#{}", p, number),
+            TodoReferenceKind::GitHubIssue {
+                repo: Some(repo),
+                number,
+                ..
+            } => format!("{}#{}", repo, number),
+            TodoReferenceKind::GitHubIssue {
+                repo: None, number, ..
+            } => format!("#{}", number),
+            TodoReferenceKind::GitLabMr {
+                project: None,
+                number,
+                ..
+            } => format!("!{}", number),
+            TodoReferenceKind::GitLabMr {
+                project: Some(p),
+                number,
+                ..
+            } => format!("{}!{}", p, number),
+            TodoReferenceKind::GitHubPr { repo, number, .. } => format!("{}#{}", repo, number),
+            TodoReferenceKind::GitLabEpic {
+                group: None,
+                number,
+                ..
+            } => format!("&{}", number),
+            TodoReferenceKind::GitLabEpic {
+                group: Some(g),
+                number,
+                ..
+            } => format!("{}&{}", g, number),
+        }
+    }
+
+    pub fn source_line(&self) -> &str {
+        &self.source_line
+    }
+
+    pub fn file_path(&self) -> &str {
+        &self.file_path
+    }
+
+    pub fn line_number(&self) -> u64 {
+        self.line_number
+    }
+
+    pub fn suggest_simplified_format(
+        &self,
+        project_detection: &ProjectDetection,
+    ) -> Option<ReferenceWarning> {
+        let base_suggestion = self.recommended_format.as_deref()?;
+
+        let suggestion = match &self.kind {
+            TodoReferenceKind::GitLabIssue {
+                project: Some(project),
+                number,
+                ..
+            } => {
+                if project_detection.matches_gitlab(project) {
+                    format!("#{number}")
+                } else {
+                    base_suggestion.to_string()
+                }
+            }
+            TodoReferenceKind::GitLabMr {
+                project: Some(project),
+                number,
+                ..
+            } => {
+                if project_detection.matches_gitlab(project) {
+                    format!("!{number}")
+                } else {
+                    base_suggestion.to_string()
+                }
+            }
+            TodoReferenceKind::GitLabEpic {
+                group: Some(group),
+                number,
+                ..
+            } => {
+                if project_detection.parent_group_matches(group) {
+                    format!("&{number}")
+                } else {
+                    base_suggestion.to_string()
+                }
+            }
+            _ => base_suggestion.to_string(),
+        };
+
+        Some(ReferenceWarning {
+            reference: self.clone(),
+            original: self.original_reference.clone(),
+            suggestion,
+        })
+    }
+}
+
+type ExtractorFn =
+    Box<dyn Fn(&regex::Captures, &str, &str, u64) -> Option<TodoReference> + Send + Sync>;
+
+pub struct TodoExtractor {
+    todo_ref_pattern: Regex,
+    patterns: Vec<(Regex, ExtractorFn)>,
+    lint_rules: Vec<LintRule>,
     exclude_file_regexes: Vec<Regex>,
 }
 
-impl Default for TodoLinter {
+impl Default for TodoExtractor {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TodoLinter {
+impl TodoExtractor {
     pub fn new() -> Self {
-        Self {
-            rules: Self::default_rules(),
-            exclude_file_regexes: Vec::new(),
-        }
+        Self::with_exclude_file_regexes(&[]).expect("default extractor regexes should compile")
     }
 
     pub fn with_exclude_file_regexes(exclude_file_regexes: &[String]) -> anyhow::Result<Self> {
-        let exclude_file_regexes = exclude_file_regexes
-            .iter()
-            .map(|pattern| {
-                Regex::new(pattern).map_err(|e| {
-                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        // Extract TODO reference candidates in two forms:
+        // 1) TODO <single-ref>:
+        // 2) TODO(<multiple-refs>) or TODO (<multiple-refs>)
+        //
+        // This is intentionally applied with captures_iter so multiple TODOs on one line are
+        // each processed independently, e.g. "TODO (#7) TODO #18: TODO(#1,#2)".
+        let todo_ref_pattern = Regex::new(
+            r"(?x)
+                \bTODO\b # TODO on a word boundary
+                (?:
+                    \s+
+                    (?P<single_ref>
+                        (?:https?://)?  # refs can start with a URL schema
+                        [^\s():]+       # refs can't contain whitespace or parentheses, or colons after the URL schema
+                    )
+                    (?:
+                        :?                # may be followed by a colon
+                        (?:
+                            \s+               # 'TODO <ref>:' with trailing text
+                            |$                # 'TODO <ref>:' at end of line
+                        )
+                    )
+                    |
+                    \s*\(
+                    (?P<multiple_refs>[^)]+?)
+                    \)
+                )
+            ",
+        )
+        .unwrap();
 
-        Ok(Self {
-            rules: Self::default_rules(),
-            exclude_file_regexes,
-        })
-    }
+        let patterns: Vec<(Regex, ExtractorFn)> = vec![
+            // Local GitLab issues: #123
+            // TODO(#6): support local GitHub issues and PRs
+            (
+                Regex::new(r"^#(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabIssue {
+                                project: None,
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitLab issues/work items with optional schema:
+            // https://gitlab.com/group/.../repo/-/issues/123
+            // gitlab.com/group/.../repo/-/issues/123
+            // https://gitlab.com/group/.../repo/-/work_items/123
+            // gitlab.com/group/.../repo/-/work_items/123
+            (
+                Regex::new(
+                    r"^(?:https?://)?gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)$",
+                )
+                .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let project = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabIssue {
+                                project: Some(project.clone()),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            Some(format!("{project}#{number}")),
+                        ))
+                    },
+                ),
+            ),
+            // GitHub issues with optional schema:
+            // https://github.com/owner/repo/issues/123
+            // github.com/owner/repo/issues/123
+            (
+                Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let repo = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitHubIssue {
+                                repo: Some(repo.clone()),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            // Always use github.com/ prefix: bare owner/repo#N or #N would
+                            // be misinterpreted as GitLab refs by the parser.
+                            // TODO(#6): support GitHub "short" refs
+                            Some(format!("github.com/{repo}#{number}")),
+                        ))
+                    },
+                ),
+            ),
+            // GitHub issues in shorthand format: github.com/owner/repo#123
+            (
+                Regex::new(r"^github\.com/([^/]+/[^/]+)#(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let repo = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitHubIssue {
+                                repo: Some(repo),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitLab issues in rendered format: group/subgroup/repo#123
+            // NOTE: This must come AFTER GitHub patterns to avoid misclassifying github.com URLs
+            // TODO(#6): support GitHub issues and PRs
+            (
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let project = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabIssue {
+                                project: Some(project),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // Local GitLab MRs: !123
+            (
+                Regex::new(r"^!(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabMr {
+                                project: None,
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitLab MRs with optional schema:
+            // https://gitlab.com/group/.../repo/-/merge_requests/123
+            // gitlab.com/group/.../repo/-/merge_requests/123
+            (
+                Regex::new(r"^(?:https?://)?gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)$")
+                    .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let project = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabMr {
+                                project: Some(project.clone()),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            Some(format!("{project}!{number}")),
+                        ))
+                    },
+                ),
+            ),
+            // GitLab MRs in rendered format: group/subgroup/repo!123
+            (
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let project = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabMr {
+                                project: Some(project),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitHub PRs with optional schema:
+            // https://github.com/owner/repo/pull/123
+            // github.com/owner/repo/pull/123
+            (
+                Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/]+)/pull/(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let repo = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitHubPr { repo, number },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // Local GitLab epics: &123
+            (
+                Regex::new(r"^&(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabEpic {
+                                group: None,
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitLab epics with optional schema:
+            // https://gitlab.com/groups/group/.../path/-/epics/123
+            // gitlab.com/groups/group/.../path/-/epics/123
+            (
+                Regex::new(r"^(?:https?://)?gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)$")
+                    .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabEpic {
+                                group: Some(group.clone()),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            Some(format!("{group}&{number}")),
+                        ))
+                    },
+                ),
+            ),
+            // GitLab epics in rendered format: group/subgroup/path&123
+            (
+                Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabEpic {
+                                group: Some(group),
+                                number,
+                            },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+        ];
 
-    fn default_rules() -> Vec<LintRule> {
-        let rules = vec![
+        let lint_rules = vec![
             LintRule {
                 category: LintCategory::NonMergeable,
                 pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
@@ -129,33 +588,69 @@ impl TodoLinter {
                 exclude_pattern: None,
             },
             LintRule {
-                category: LintCategory::IncorrectSyntax,
-                pattern: Regex::new(r"\bTODO...").unwrap(),
-                exclude_pattern: Some(Regex::new(
-                    r"\bTODO(:? (github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+|\((github\.com/[-\w]+/[-\w]+|([-\w]+/)+[-\w]+)?[#!&]\d+| performance)",
-                ).unwrap()),
-            },
-            LintRule {
                 category: LintCategory::Uncapitalized,
                 pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
                 exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
             },
         ];
 
-        rules
+        let exclude_file_regexes = exclude_file_regexes
+            .iter()
+            .map(|pattern| {
+                Regex::new(pattern).map_err(|e| {
+                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(Self {
+            todo_ref_pattern,
+            patterns,
+            lint_rules,
+            exclude_file_regexes,
+        })
     }
 
-    pub fn lint_directory(&self, dir: &Path) -> anyhow::Result<LintViolationMap> {
-        let violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
+    fn extract_token_reference(
+        &self,
+        token: &str,
+        line: &str,
+        file_path: &str,
+        line_number: u64,
+    ) -> Option<TodoReference> {
+        let token = token.trim();
+        if token.is_empty() {
+            return None;
+        }
 
-        // Match any line that could contain a violation
-        let combined_pattern =
-            r"\b(XXX|FIXME|TEMP|TBD|MVP|TODO)\b|(#|//).*\b(todo|xxx|fixme|temp|tbd)\b";
-        let matcher = RegexMatcher::new(combined_pattern)?;
+        for (pattern, extractor) in &self.patterns {
+            if let Some(caps) = pattern.captures(token) {
+                if let Some(reference) = extractor(&caps, line, file_path, line_number) {
+                    return Some(reference);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<ExtractionResult> {
+        tracing::debug!(
+            "Extracting TODO references from directory: {}",
+            dir.display()
+        );
+        let all_references = Arc::new(Mutex::new(HashSet::new()));
+        let lint_violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
+        let todo_presence_pattern = Regex::new(r"\bTODO\b")?;
+
+        // Build a combined regex pattern that matches any TODO comment
+        let todo_pattern = r"\bTODO:?";
+        let matcher = RegexMatcher::new(todo_pattern)?;
 
         for entry in walk_source_files(dir) {
             let path = entry.path();
-            let file_path_str = path
+            tracing::debug!("Processing file: {}", path.display());
+            let relative_file_path_str = path
                 .strip_prefix(dir)
                 .unwrap_or(path)
                 .to_string_lossy()
@@ -164,18 +659,24 @@ impl TodoLinter {
             if self
                 .exclude_file_regexes
                 .iter()
-                .any(|pattern| pattern.is_match(&file_path_str))
+                .any(|pattern| pattern.is_match(&relative_file_path_str))
             {
                 continue;
             }
 
-            let viols = violations.clone();
+            let refs = all_references.clone();
+            let viols = lint_violations.clone();
+            let file_path_str = path.to_string_lossy().to_string();
+
+            // Use grep-searcher to efficiently search the file
             let mut searcher = Searcher::new();
-            let _ = searcher.search_path(
+            let result = searcher.search_path(
                 &matcher,
                 path,
                 UTF8(|lnum, line| {
-                    for rule in &self.rules {
+                    let mut line_has_match = false;
+
+                    for rule in &self.lint_rules {
                         if rule.pattern.is_match(line) {
                             if let Some(ref exclude) = rule.exclude_pattern {
                                 if exclude.is_match(line) {
@@ -190,490 +691,63 @@ impl TodoLinter {
                                 .push(LintViolation {
                                     category: rule.category,
                                     source_line: line.trim().to_string(),
-                                    file_path: path.to_string_lossy().to_string(),
+                                    file_path: file_path_str.clone(),
                                     line_number: lnum,
                                 });
                         }
                     }
-                    Ok(true)
-                }),
-            );
-        }
 
-        let result = Arc::try_unwrap(violations)
-            .map(|mutex| mutex.into_inner().unwrap())
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
-        Ok(result)
-    }
-}
+                    for todo_captures in self.todo_ref_pattern.captures_iter(line) {
+                        if let Some(single_ref) = todo_captures.name("single_ref") {
+                            let single_ref = single_ref.as_str();
+                            if single_ref.trim() == "performance" {
+                                line_has_match = true;
+                                continue;
+                            }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TodoReference {
-    GitLabIssue {
-        project: Option<String>,
-        number: u32,
-        source_line: String,
-        file_path: String,
-        line_number: u64,
-    },
-    GitHubIssue {
-        repo: Option<String>,
-        number: u32,
-        source_line: String,
-        file_path: String,
-        line_number: u64,
-    },
-    GitLabMr {
-        project: Option<String>,
-        number: u32,
-        source_line: String,
-        file_path: String,
-        line_number: u64,
-    },
-    GitHubPr {
-        repo: String,
-        number: u32,
-        source_line: String,
-        file_path: String,
-        line_number: u64,
-    },
-    GitLabEpic {
-        group: Option<String>,
-        number: u32,
-        source_line: String,
-        file_path: String,
-        line_number: u64,
-    },
-}
-
-impl TodoReference {
-    pub fn display(&self) -> String {
-        match self {
-            TodoReference::GitLabIssue {
-                project: None,
-                number,
-                ..
-            } => format!("#{}", number),
-            TodoReference::GitLabIssue {
-                project: Some(p),
-                number,
-                ..
-            } => format!("{}#{}", p, number),
-            TodoReference::GitHubIssue {
-                repo: Some(repo),
-                number,
-                ..
-            } => format!("{}#{}", repo, number),
-            TodoReference::GitHubIssue {
-                repo: None, number, ..
-            } => format!("#{}", number),
-            TodoReference::GitLabMr {
-                project: None,
-                number,
-                ..
-            } => format!("!{}", number),
-            TodoReference::GitLabMr {
-                project: Some(p),
-                number,
-                ..
-            } => format!("{}!{}", p, number),
-            TodoReference::GitHubPr { repo, number, .. } => format!("{}#{}", repo, number),
-            TodoReference::GitLabEpic {
-                group: None,
-                number,
-                ..
-            } => format!("&{}", number),
-            TodoReference::GitLabEpic {
-                group: Some(g),
-                number,
-                ..
-            } => format!("{}&{}", g, number),
-        }
-    }
-
-    pub fn source_line(&self) -> &str {
-        match self {
-            TodoReference::GitLabIssue { source_line, .. } => source_line,
-            TodoReference::GitHubIssue { source_line, .. } => source_line,
-            TodoReference::GitLabMr { source_line, .. } => source_line,
-            TodoReference::GitHubPr { source_line, .. } => source_line,
-            TodoReference::GitLabEpic { source_line, .. } => source_line,
-        }
-    }
-
-    pub fn file_path(&self) -> &str {
-        match self {
-            TodoReference::GitLabIssue { file_path, .. } => file_path,
-            TodoReference::GitHubIssue { file_path, .. } => file_path,
-            TodoReference::GitLabMr { file_path, .. } => file_path,
-            TodoReference::GitHubPr { file_path, .. } => file_path,
-            TodoReference::GitLabEpic { file_path, .. } => file_path,
-        }
-    }
-
-    pub fn line_number(&self) -> u64 {
-        match self {
-            TodoReference::GitLabIssue { line_number, .. } => *line_number,
-            TodoReference::GitHubIssue { line_number, .. } => *line_number,
-            TodoReference::GitLabMr { line_number, .. } => *line_number,
-            TodoReference::GitHubPr { line_number, .. } => *line_number,
-            TodoReference::GitLabEpic { line_number, .. } => *line_number,
-        }
-    }
-}
-
-type ExtractorFn =
-    Box<dyn Fn(&regex::Captures, &str, &str, u64) -> Option<TodoReference> + Send + Sync>;
-
-pub struct TodoExtractor {
-    patterns: Vec<(Regex, ExtractorFn)>,
-}
-
-impl Default for TodoExtractor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TodoExtractor {
-    pub fn new() -> Self {
-        let patterns: Vec<(Regex, ExtractorFn)> = vec![
-            // Local GitLab issues: TODO #123 or TODO(#123)
-            (
-                Regex::new(r"\bTODO(?::? |\()#(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        caps.get(1)
-                            .and_then(|m| m.as_str().parse::<u32>().ok())
-                            .map(|num| TodoReference::GitLabIssue {
-                                project: None,
-                                number: num,
-                                source_line: line.trim().to_string(),
-                                file_path: file_path.to_string(),
-                                line_number,
-                            })
-                    },
-                ),
-            ),
-            // GitLab issues/work items with full URLs:
-            // https://gitlab.com/group/.../repo/-/issues/123
-            // https://gitlab.com/group/.../repo/-/work_items/123
-            (
-                Regex::new(r"TODO(?::?.*|\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)")
-                    .unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabIssue {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab issues/work items without schema:
-            // gitlab.com/group/.../repo/-/issues/123
-            // gitlab.com/group/.../repo/-/work_items/123
-            (
-                Regex::new(r"TODO(?::?.*|\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/(?:issues|work_items)/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabIssue {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitHub issues with full URLs: https://github.com/owner/repo/issues/123
-            (
-                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let repo = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitHubIssue {
-                            repo: Some(repo),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitHub issues without schema: github.com/owner/repo/issues/123
-            (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/issues/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let repo = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitHubIssue {
-                            repo: Some(repo),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitHub issues in shorthand format: github.com/owner/repo#123
-            (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)#(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let repo = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitHubIssue {
-                            repo: Some(repo),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab issues in rendered format: group/subgroup/repo#123
-            // NOTE: This must come AFTER GitHub patterns to avoid misclassifying github.com URLs
-            (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabIssue {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // Local GitLab MRs: TODO !123 or TODO(!123)
-            (
-                Regex::new(r"\bTODO(?::? |\()!(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        caps.get(1)
-                            .and_then(|m| m.as_str().parse::<u32>().ok())
-                            .map(|num| TodoReference::GitLabMr {
-                                project: None,
-                                number: num,
-                                source_line: line.trim().to_string(),
-                                file_path: file_path.to_string(),
-                                line_number,
-                            })
-                    },
-                ),
-            ),
-            // GitLab MRs with full URLs: https://gitlab.com/group/.../repo/-/merge_requests/123
-            (
-                Regex::new(
-                    r"TODO(?::? |\()https?://gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)",
-                )
-                .unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabMr {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab MRs without schema: gitlab.com/group/.../repo/-/merge_requests/123
-            (
-                Regex::new(r"TODO(?::? |\()gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)")
-                    .unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabMr {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab MRs in rendered format: group/subgroup/repo!123
-            (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let project = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabMr {
-                            project: Some(project),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitHub PRs with full URLs: https://github.com/owner/repo/pull/123
-            (
-                Regex::new(r"TODO(?::? |\()https?://github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let repo = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitHubPr {
-                            repo,
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitHub PRs without schema: github.com/owner/repo/pull/123
-            (
-                Regex::new(r"TODO(?::? |\()github\.com/([^/]+/[^/]+)/pull/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let repo = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitHubPr {
-                            repo,
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // Local GitLab epics: TODO &123 or TODO(&123)
-            (
-                Regex::new(r"\bTODO(?::? |\()&(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        caps.get(1)
-                            .and_then(|m| m.as_str().parse::<u32>().ok())
-                            .map(|num| TodoReference::GitLabEpic {
-                                group: None,
-                                number: num,
-                                source_line: line.trim().to_string(),
-                                file_path: file_path.to_string(),
-                                line_number,
-                            })
-                    },
-                ),
-            ),
-            // GitLab epics with full URLs: https://gitlab.com/groups/group/.../path/-/epics/123
-            (
-                Regex::new(r"TODO(?::? |\()https?://gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)")
-                    .unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let group = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabEpic {
-                            group: Some(group),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab epics without schema: gitlab.com/groups/group/.../path/-/epics/123
-            (
-                Regex::new(r"TODO(?::? |\()gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let group = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabEpic {
-                            group: Some(group),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-            // GitLab epics in rendered format: group/subgroup/path&123
-            (
-                Regex::new(r"TODO(?::? |\()\b([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)").unwrap(),
-                Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
-                        let group = caps.get(1)?.as_str().to_string();
-                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
-                        Some(TodoReference::GitLabEpic {
-                            group: Some(group),
-                            number,
-                            source_line: line.trim().to_string(),
-                            file_path: file_path.to_string(),
-                            line_number,
-                        })
-                    },
-                ),
-            ),
-        ];
-
-        Self { patterns }
-    }
-
-    pub fn extract_from_directory(&self, dir: &Path) -> anyhow::Result<HashSet<TodoReference>> {
-        tracing::debug!(
-            "Extracting TODO references from directory: {}",
-            dir.display()
-        );
-        let all_references = Arc::new(Mutex::new(HashSet::new()));
-
-        // Build a combined regex pattern that matches any TODO comment
-        let todo_pattern = r"\bTODO:?";
-        let matcher = RegexMatcher::new(todo_pattern)?;
-
-        for entry in walk_source_files(dir) {
-            let path = entry.path();
-            tracing::debug!("Processing file: {}", path.display());
-            let refs = all_references.clone();
-            let file_path_str = path.to_string_lossy().to_string();
-
-            // Use grep-searcher to efficiently search the file
-            let mut searcher = Searcher::new();
-            let result = searcher.search_path(
-                &matcher,
-                path,
-                UTF8(|lnum, line| {
-                    // Extract references from the matched line with file path and line number
-                    for (pattern, extractor) in &self.patterns {
-                        for caps in pattern.captures_iter(line) {
-                            if let Some(reference) = extractor(&caps, line, &file_path_str, lnum) {
+                            if let Some(reference) =
+                                self.extract_token_reference(single_ref, line, &file_path_str, lnum)
+                            {
+                                line_has_match = true;
                                 refs.lock().unwrap().insert(reference);
                             }
                         }
+
+                        if let Some(multiple_refs) = todo_captures.name("multiple_refs") {
+                            for token in multiple_refs.as_str().split(',').map(str::trim) {
+                                if token.is_empty() {
+                                    continue;
+                                }
+
+                                if token.trim() == "performance" {
+                                    line_has_match = true;
+                                    continue;
+                                }
+
+                                if let Some(reference) =
+                                    self.extract_token_reference(token, line, &file_path_str, lnum)
+                                {
+                                    line_has_match = true;
+                                    refs.lock().unwrap().insert(reference);
+                                }
+                            }
+                        }
                     }
+
+                    if todo_presence_pattern.is_match(line) && !line_has_match {
+                        viols
+                            .lock()
+                            .unwrap()
+                            .entry(LintCategory::IncorrectSyntax)
+                            .or_default()
+                            .push(LintViolation {
+                                category: LintCategory::IncorrectSyntax,
+                                source_line: line.trim().to_string(),
+                                file_path: file_path_str.clone(),
+                                line_number: lnum,
+                            });
+                    }
+
                     Ok(true)
                 }),
             );
@@ -687,7 +761,13 @@ impl TodoExtractor {
         let references = Arc::try_unwrap(all_references)
             .map(|mutex| mutex.into_inner().unwrap())
             .unwrap_or_else(|arc| arc.lock().unwrap().clone());
-        tracing::debug!(directory=%dir.display(), ?references, "Extracted TODO references");
-        Ok(references)
+        let lint_violations = Arc::try_unwrap(lint_violations)
+            .map(|mutex| mutex.into_inner().unwrap())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        tracing::debug!(directory=%dir.display(), ?references, ?lint_violations, "Extracted TODO references");
+        Ok(ExtractionResult {
+            references,
+            lint_violations,
+        })
     }
 }

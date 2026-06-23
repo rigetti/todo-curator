@@ -1,3 +1,9 @@
+## 0.1.7-dev.0 (2026-06-19)
+
+### Features
+
+- simplifying logic and permitting multiple refs within parens
+
 ## 0.1.6 (2026-06-06)
 
 ### Features
