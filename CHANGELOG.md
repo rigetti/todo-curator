@@ -1,3 +1,9 @@
+## 0.1.7 (2026-06-23)
+
+### Features
+
+- permitting multiple refs within parens, suggesting "simplified" references, and refactoring
+
 ## 0.1.7-dev.0 (2026-06-19)
 
 ### Features
