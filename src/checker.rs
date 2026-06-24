@@ -322,9 +322,19 @@ impl StatusChecker {
                 .check_single_reference(default_project, reference)
                 .await
             {
-                Ok(Some(closed_ref)) => closed.push(closed_ref),
-                Ok(None) => {} // Reference exists but is not closed
+                Ok(Some(closed_ref)) => {
+                    tracing::info!("Reference closed: {:?}", closed_ref.reference);
+                    closed.push(closed_ref)
+                }
+                Ok(None) => {
+                    tracing::info!("Reference exists but is not closed: {:?}", reference);
+                }
                 Err(e) => {
+                    tracing::warn!(
+                        "Reference not found or inaccessible: {:?}, error: {}",
+                        reference,
+                        e
+                    );
                     not_found.push(NotFoundReference {
                         reference: reference.clone(),
                         error: e.to_string(),
@@ -584,15 +594,10 @@ impl StatusChecker {
             .await
             .context("Failed to query GitLab epic")?;
 
-        // Check response status
-        let status = response.status();
-
         // Parse the response body
         let body = response.into_body();
         let epic: serde_json::Value =
             serde_json::from_slice(&body).context("Failed to parse GitLab epic response")?;
-
-        tracing::debug!("GitLab epic response (status {}): {:?}", status, epic);
 
         // Check if the response contains an error message (404, 403, etc.)
         if let Some(message) = epic.get("message").and_then(|v| v.as_str()) {
@@ -610,8 +615,6 @@ impl StatusChecker {
             .and_then(|v| v.as_str())
             .unwrap_or("(no title)")
             .to_string();
-
-        tracing::debug!("Epic state: {}, title: {}", state, title);
 
         // Epics can be in states: opened, closed
         if state == "closed" {
