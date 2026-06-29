@@ -358,7 +358,7 @@ impl StatusChecker {
                 self.check_gitlab_issue(default_project, reference, project.as_deref(), *number)
                     .await
             }
-            TodoReferenceKind::GitHubIssue { repo, number, .. } => {
+            TodoReferenceKind::GitHubIssueOrPr { repo, number, .. } => {
                 self.check_github_issue(default_project, reference, repo.as_deref(), *number)
                     .await
             }

@@ -5,7 +5,9 @@
 //!
 //! To run with GitHub authentication:
 //! ```bash
-//! GH_TOKEN=$(gh auth token) cargo test --test integration_test
+//! # Prefer using the helper to populate auth env vars
+//! source scripts/auth-setup.sh
+//! cargo test --test integration_test
 //! ```
 
 use std::path::PathBuf;
@@ -52,13 +54,13 @@ fn test_example_todos_file() {
     );
 
     // Run the binary with the test data
-    // Note: This will fail if GH_TOKEN is not set, which is expected behavior
+    // Note: This will fail if GITHUB_TOKEN is not set, which is expected behavior
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
     cmd.arg("check-closed").arg("-p").arg(&data_path);
 
-    // Pass through GH_TOKEN if it exists
-    if let Ok(token) = std::env::var("GH_TOKEN") {
-        cmd.env("GH_TOKEN", token);
+    // Pass through GITHUB_TOKEN if it exists
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        cmd.env("GITHUB_TOKEN", token);
     }
 
     // Remove RUST_LOG to avoid tracing output interfering with tests
@@ -71,10 +73,10 @@ fn test_example_todos_file() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // The command should either succeed or fail based on authentication
-    // If GH_TOKEN is not set, it should fail with an auth error
+    // If GITHUB_TOKEN is not set, it should fail with an auth error
     // If it is set, it should find some closed issues
 
-    if std::env::var("GH_TOKEN").is_ok() {
+    if std::env::var("GITHUB_TOKEN").is_ok() {
         // With authentication, we expect to find closed issues
         assert!(
             stdout.contains("TODO comments referencing closed issues/MRs:")
@@ -296,7 +298,6 @@ fn test_check_invalid_skips_auth_validation() {
         .arg("check-invalid")
         .arg("-p")
         .arg(&temp_dir)
-        .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GITLAB_TOKEN")
         .env_remove("GL_TOKEN")
@@ -382,7 +383,7 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_check_all_projection.rs");
     let has_remote_auth =
-        std::env::var("GH_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
+        std::env::var("GITHUB_TOKEN").is_ok() || std::env::var("GITLAB_TOKEN").is_ok();
     let file_content = if has_remote_auth {
         "// TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n// TODO without a reference\n"
     } else {
@@ -769,7 +770,7 @@ fn test_parenthesized_todo_extraction() {
         refs.iter().any(|r| matches!(
             r,
             TodoReference {
-                kind: TodoReferenceKind::GitHubIssue {
+                kind: TodoReferenceKind::GitHubIssueOrPr {
                     repo: Some(repo),
                     number: 300,
                     ..
@@ -892,7 +893,7 @@ fn test_parenthesized_todo_extraction() {
         refs.iter().any(|r| matches!(
             r,
             TodoReference {
-                kind: TodoReferenceKind::GitHubIssue {
+                kind: TodoReferenceKind::GitHubIssueOrPr {
                     repo: Some(repo),
                     number: 820,
                     ..
@@ -983,7 +984,7 @@ fn test_parenthesized_todo_extraction() {
             refs.iter().any(|r| matches!(
                 r,
                 TodoReference {
-                    kind: TodoReferenceKind::GitHubIssue {
+                    kind: TodoReferenceKind::GitHubIssueOrPr {
                         repo: Some(rp),
                         number: n,
                         ..
@@ -1118,7 +1119,7 @@ fn test_cross_project_shorthand_disambiguation() {
         refs.iter().any(|r| matches!(
             r,
             TodoReference {
-                kind: TodoReferenceKind::GitHubIssue {
+                kind: TodoReferenceKind::GitHubIssueOrPr {
                     repo: Some(p),
                     number: 7,
                     ..
@@ -1127,7 +1128,7 @@ fn test_cross_project_shorthand_disambiguation() {
             }
             if p == "owner/repo"
         )),
-        "github.com/owner/repo#7 should parse as GitHubIssue. Got: {:#?}",
+        "github.com/owner/repo#7 should parse as GitHubIssueOrPr. Got: {:#?}",
         refs
     );
 }
