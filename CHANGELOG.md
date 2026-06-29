@@ -1,3 +1,9 @@
+## 0.1.9 (2026-06-29)
+
+### Fixes
+
+- tests should work with auth script
+
 ## 0.1.8 (2026-06-25)
 
 ### Fixes
