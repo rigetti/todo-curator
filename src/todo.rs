@@ -94,7 +94,7 @@ pub enum TodoReferenceKind {
         project: Option<String>,
         number: u32,
     },
-    GitHubIssue {
+    GitHubIssueOrPr {
         repo: Option<String>,
         number: u32,
     },
@@ -156,12 +156,12 @@ impl TodoReference {
                 number,
                 ..
             } => format!("{}#{}", p, number),
-            TodoReferenceKind::GitHubIssue {
+            TodoReferenceKind::GitHubIssueOrPr {
                 repo: Some(repo),
                 number,
                 ..
             } => format!("{}#{}", repo, number),
-            TodoReferenceKind::GitHubIssue {
+            TodoReferenceKind::GitHubIssueOrPr {
                 repo: None, number, ..
             } => format!("#{}", number),
             TodoReferenceKind::GitLabMr {
@@ -364,7 +364,7 @@ impl TodoExtractor {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
-                            TodoReferenceKind::GitHubIssue {
+                            TodoReferenceKind::GitHubIssueOrPr {
                                 repo: Some(repo.clone()),
                                 number,
                             },
@@ -388,7 +388,7 @@ impl TodoExtractor {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
-                            TodoReferenceKind::GitHubIssue {
+                            TodoReferenceKind::GitHubIssueOrPr {
                                 repo: Some(repo),
                                 number,
                             },

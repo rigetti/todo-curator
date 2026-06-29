@@ -3,7 +3,7 @@
 # Helper script to set up GITLAB_TOKEN and GITHUB_TOKEN for todo-curator
 # This is sourced by autoauth-todo-curator.sh
 
-set -euo pipefail
+# Since this is sourced, it does *not* use `set -euo pipefail`.
 
 # Resolve GitLab token with explicit precedence:
 # 1) GITLAB_TOKEN

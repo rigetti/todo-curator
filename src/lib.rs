@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn warns_and_suggests_github_prefixed_form_for_same_github_repo_issue_url() {
         let refs = vec![todo::TodoReference {
-            kind: todo::TodoReferenceKind::GitHubIssue {
+            kind: todo::TodoReferenceKind::GitHubIssueOrPr {
                 repo: Some("owner/repo".to_string()),
                 number: 7,
             },
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn warns_and_suggests_github_prefixed_form_for_cross_repo_github_issue_url() {
         let refs = vec![todo::TodoReference {
-            kind: todo::TodoReferenceKind::GitHubIssue {
+            kind: todo::TodoReferenceKind::GitHubIssueOrPr {
                 repo: Some("owner/repo".to_string()),
                 number: 7,
             },
