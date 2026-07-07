@@ -1,3 +1,9 @@
+## 0.1.10 (2026-07-07)
+
+### Fixes
+
+- auth not required for check-invalid; FIXMEs (and similar) are prohibited
+
 ## 0.1.9 (2026-06-29)
 
 ### Fixes
