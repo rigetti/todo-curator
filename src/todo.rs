@@ -5,7 +5,6 @@ use ignore::{DirEntry, WalkBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -26,66 +25,22 @@ fn walk_source_files(dir: &Path) -> impl Iterator<Item = DirEntry> {
         .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
 }
 
-/// Categories of lint violations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum LintCategory {
-    NonMergeable,
-    MvpComment,
-    IncorrectSyntax,
-    Uncapitalized,
-}
-
-impl LintCategory {
-    /// Header text for this category when printing violations.
-    pub fn header(&self) -> &'static str {
-        match self {
-            Self::NonMergeable => "Non-mergeable TODOs:",
-            Self::MvpComment => "Non-mergeable TODOs:",
-            Self::IncorrectSyntax => "Improperly-formatted TODO comments:",
-            Self::Uncapitalized => "Improperly-formatted TODO comments:",
-        }
-    }
-
-    /// Optional hint printed once beneath the header.
-    pub fn header_hint(&self) -> Option<&'static str> {
-        match self {
-            Self::IncorrectSyntax | Self::Uncapitalized => Some(
-                r#"use `TODO(<ref>)` or `TODO <ref>:`, where `<ref>` is `[repo]#<ticket>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#,
-            ),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for LintCategory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.header())
-    }
-}
-
 /// A lint violation found in a TODO comment.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LintViolation {
-    pub category: LintCategory,
     pub source_line: String,
     pub file_path: String,
     pub line_number: u64,
 }
 
-/// A map of lint violations grouped by category.
-pub type LintViolationMap = HashMap<LintCategory, Vec<LintViolation>>;
+/// A list of TODO-like comment lines that do not match accepted TODO reference syntax.
+pub type LintViolations = Vec<LintViolation>;
 
 /// Result of TODO extraction, including parsed references and syntax violations.
 #[derive(Debug, Default)]
 pub struct ExtractionResult {
     pub references: HashSet<TodoReference>,
-    pub lint_violations: LintViolationMap,
-}
-
-struct LintRule {
-    category: LintCategory,
-    pattern: Regex,
-    exclude_pattern: Option<Regex>,
+    pub lint_violations: LintViolations,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -257,7 +212,6 @@ type ExtractorFn =
 pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
-    lint_rules: Vec<LintRule>,
     exclude_file_regexes: Vec<Regex>,
 }
 
@@ -576,24 +530,6 @@ impl TodoExtractor {
             ),
         ];
 
-        let lint_rules = vec![
-            LintRule {
-                category: LintCategory::NonMergeable,
-                pattern: Regex::new(r"\b(XXX|FIXME|TEMP|TBD)\b").unwrap(),
-                exclude_pattern: None,
-            },
-            LintRule {
-                category: LintCategory::MvpComment,
-                pattern: Regex::new(r"\b(MVP)\b").unwrap(),
-                exclude_pattern: None,
-            },
-            LintRule {
-                category: LintCategory::Uncapitalized,
-                pattern: Regex::new(r"(#|//).*\b(todo|xxx|fixme|temp|tbd)\b").unwrap(),
-                exclude_pattern: Some(Regex::new(r"(todo|xxx|fixme|temp|tbd)-").unwrap()),
-            },
-        ];
-
         let exclude_file_regexes = exclude_file_regexes
             .iter()
             .map(|pattern| {
@@ -606,7 +542,6 @@ impl TodoExtractor {
         Ok(Self {
             todo_ref_pattern,
             patterns,
-            lint_rules,
             exclude_file_regexes,
         })
     }
@@ -640,11 +575,14 @@ impl TodoExtractor {
             dir.display()
         );
         let all_references = Arc::new(Mutex::new(HashSet::new()));
-        let lint_violations: Arc<Mutex<LintViolationMap>> = Arc::new(Mutex::new(HashMap::new()));
-        let todo_presence_pattern = Regex::new(r"\bTODO\b")?;
+        let lint_violations: Arc<Mutex<LintViolations>> = Arc::new(Mutex::new(Vec::new()));
 
-        // Build a combined regex pattern that matches any TODO comment
-        let todo_pattern = r"\bTODO:?";
+        // Build a combined regex pattern that matches all tracked TODO-like markers.
+        // Searcher only invokes the callback on matching lines,
+        // so this must include all lint-triggering keywords (e.g. FIXME), not just TODO.
+        // Lowercase `todo` and `temp` are ignored unless they are clearly part of a single-line code comment,
+        // since common patterns such as `temp` as a variable and the `todo!` Rust macro would otherwise trigger false positives.
+        let todo_pattern = r"\bTODO\b|(?i:\b(?:xxx|fixme|tbd|mvp)\b)|\bTEMP\b|(?:#|//).*(?:\btemp\b|\btodo(?:\b$|\b[^-]))";
         let matcher = RegexMatcher::new(todo_pattern)?;
 
         for entry in walk_source_files(dir) {
@@ -675,27 +613,6 @@ impl TodoExtractor {
                 path,
                 UTF8(|lnum, line| {
                     let mut line_has_match = false;
-
-                    for rule in &self.lint_rules {
-                        if rule.pattern.is_match(line) {
-                            if let Some(ref exclude) = rule.exclude_pattern {
-                                if exclude.is_match(line) {
-                                    continue;
-                                }
-                            }
-                            viols
-                                .lock()
-                                .unwrap()
-                                .entry(rule.category)
-                                .or_default()
-                                .push(LintViolation {
-                                    category: rule.category,
-                                    source_line: line.trim().to_string(),
-                                    file_path: file_path_str.clone(),
-                                    line_number: lnum,
-                                });
-                        }
-                    }
 
                     for todo_captures in self.todo_ref_pattern.captures_iter(line) {
                         if let Some(single_ref) = todo_captures.name("single_ref") {
@@ -734,18 +651,12 @@ impl TodoExtractor {
                         }
                     }
 
-                    if todo_presence_pattern.is_match(line) && !line_has_match {
-                        viols
-                            .lock()
-                            .unwrap()
-                            .entry(LintCategory::IncorrectSyntax)
-                            .or_default()
-                            .push(LintViolation {
-                                category: LintCategory::IncorrectSyntax,
-                                source_line: line.trim().to_string(),
-                                file_path: file_path_str.clone(),
-                                line_number: lnum,
-                            });
+                    if !line_has_match {
+                        viols.lock().unwrap().push(LintViolation {
+                            source_line: line.trim().to_string(),
+                            file_path: file_path_str.clone(),
+                            line_number: lnum,
+                        });
                     }
 
                     Ok(true)
@@ -764,6 +675,25 @@ impl TodoExtractor {
         let lint_violations = Arc::try_unwrap(lint_violations)
             .map(|mutex| mutex.into_inner().unwrap())
             .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        let mut deduped_lint_violations: HashMap<(String, u64, String), LintViolation> =
+            HashMap::new();
+        for violation in lint_violations {
+            deduped_lint_violations
+                .entry((
+                    violation.file_path.clone(),
+                    violation.line_number,
+                    violation.source_line.clone(),
+                ))
+                .or_insert(violation);
+        }
+        let mut lint_violations: Vec<LintViolation> =
+            deduped_lint_violations.into_values().collect();
+        lint_violations.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then(a.line_number.cmp(&b.line_number))
+                .then(a.source_line.cmp(&b.source_line))
+        });
         tracing::debug!(directory=%dir.display(), ?references, ?lint_violations, "Extracted TODO references");
         Ok(ExtractionResult {
             references,

@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -122,16 +123,18 @@ async fn main() -> Result<()> {
         }
     };
 
-    let checker = StatusChecker::new().await?;
-
     let needs_auth = matches!(
         cli.command,
         Commands::CheckClosed { .. } | Commands::CheckAll { .. } | Commands::CheckMrTodos { .. }
     );
 
-    if needs_auth {
+    let checker = if needs_auth {
+        let checker = StatusChecker::new().await?;
         checker.check_auth()?;
-    }
+        Some(checker)
+    } else {
+        None
+    };
 
     match cli.command {
         Commands::CheckClosed { args } => {
@@ -141,6 +144,9 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let checker = checker
+                .as_ref()
+                .expect("checker should be initialized for check-closed");
             let result =
                 check_closed_references(path, &project_detection, &checker, &exclude_file_regex)
                     .await?;
@@ -153,7 +159,7 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
-            let result = check_invalid(&path, &project_detection, &checker, &exclude_file_regex)?;
+            let result = check_invalid(&path, &project_detection, &exclude_file_regex)?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckAll { args } => {
@@ -163,17 +169,16 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let checker = checker
+                .as_ref()
+                .expect("checker should be initialized for check-all");
             let extraction = extract_todos(&path, &exclude_file_regex)?;
             let mut closed_result =
                 check_closed_from_extraction(&extraction, &project_detection, &checker).await?;
             let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
-            for (category, mut violations) in invalid_result.lint_violations {
-                closed_result
-                    .lint_violations
-                    .entry(category)
-                    .or_default()
-                    .append(&mut violations);
-            }
+            closed_result
+                .lint_violations
+                .extend(invalid_result.lint_violations);
 
             // Also run MR check (best-effort: skip if not in MR context)
             let mr_issues: Vec<MrIssue> =
@@ -206,6 +211,9 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let checker = checker
+                .as_ref()
+                .expect("checker should be initialized for check-mr-todos");
             let extraction = extract_todos(&path, &exclude_file_regex)?;
             check_mr_todos(
                 &extraction.references,
@@ -278,22 +286,30 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
             "{}",
             "TODO comments referencing closed issues/MRs:".red().bold()
         )?;
+
+        let mut grouped: BTreeMap<String, (&str, Vec<&todo_curator::checker::ClosedReference>)> =
+            BTreeMap::new();
         for closed_ref in &output.closed {
-            writeln!(
-                writer,
-                "{}: {}",
-                closed_ref.reference.display().yellow(),
-                closed_ref.title
-            )?;
-            writeln!(
-                writer,
-                "  {}:{}",
-                closed_ref.reference.file_path().bold(),
-                closed_ref.reference.line_number().to_string().bold()
-            )?;
-            let source = closed_ref.reference.source_line();
-            if !source.is_empty() {
-                writeln!(writer, "  {}", source.dimmed())?;
+            let key = closed_ref.reference.display();
+            grouped
+                .entry(key)
+                .and_modify(|(_, refs)| refs.push(closed_ref))
+                .or_insert_with(|| (closed_ref.title.as_str(), vec![closed_ref]));
+        }
+
+        for (reference_display, (title, refs)) in grouped {
+            writeln!(writer, "{}: {}", reference_display.yellow(), title)?;
+            for closed_ref in refs {
+                writeln!(
+                    writer,
+                    "  {}:{}",
+                    closed_ref.reference.file_path().bold(),
+                    closed_ref.reference.line_number().to_string().bold()
+                )?;
+                let source = closed_ref.reference.source_line();
+                if !source.is_empty() {
+                    writeln!(writer, "  {}", source.dimmed())?;
+                }
             }
         }
     }
@@ -353,20 +369,21 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
     }
 
     if !output.lint_violations.is_empty() {
-        for (category, violations) in &output.lint_violations {
-            writeln!(writer, "\n{}", category.header().red().bold())?;
-            if let Some(hint) = category.header_hint() {
-                writeln!(writer, "  {}", hint.yellow())?;
-            }
-            for violation in violations {
-                writeln!(
-                    writer,
-                    "  {}:{}",
-                    violation.file_path.bold(),
-                    violation.line_number.to_string().bold(),
-                )?;
-                writeln!(writer, "    {}", violation.source_line.dimmed())?;
-            }
+        writeln!(writer, "\n{}", "Invalid TODO-like comments:".red().bold())?;
+        writeln!(
+            writer,
+            "  {}",
+            r#"use `TODO (<ref>)`, where `<ref>` is `[repo]#<ticket>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#
+                .yellow()
+        )?;
+        for violation in &output.lint_violations {
+            writeln!(
+                writer,
+                "  {}:{}",
+                violation.file_path.bold(),
+                violation.line_number.to_string().bold(),
+            )?;
+            writeln!(writer, "    {}", violation.source_line.dimmed())?;
         }
     }
 
