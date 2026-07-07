@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use todo::{ExtractionResult, LintViolationMap};
+use todo::{ExtractionResult, LintViolations};
 
 /// JSON output format for check results
 #[derive(Debug, Serialize, Deserialize)]
@@ -17,8 +17,8 @@ pub struct CheckOutput {
     pub not_found: Vec<checker::NotFoundReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ReferenceWarning>,
-    #[serde(default, skip_serializing_if = "LintViolationMap::is_empty")]
-    pub lint_violations: LintViolationMap,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_violations: LintViolations,
     pub status: String,
 }
 
@@ -31,7 +31,7 @@ pub struct ReferenceWarning {
 
 impl CheckOutput {
     /// Create a CheckOutput from a CheckResult and lint violations
-    pub fn from_result(result: checker::CheckResult, lint_violations: LintViolationMap) -> Self {
+    pub fn from_result(result: checker::CheckResult, lint_violations: LintViolations) -> Self {
         let status = if result.closed.is_empty()
             && result.not_found.is_empty()
             && lint_violations.is_empty()
@@ -56,7 +56,7 @@ impl CheckOutput {
             closed: Vec::new(),
             not_found: Vec::new(),
             warnings: Vec::new(),
-            lint_violations: LintViolationMap::new(),
+            lint_violations: Vec::new(),
             status: "success".to_string(),
         }
     }
@@ -102,7 +102,7 @@ pub async fn check_closed_from_extraction(
     let result = checker
         .check_references(project_detection, &references_vec)
         .await?;
-    let mut output = CheckOutput::from_result(result, LintViolationMap::new());
+    let mut output = CheckOutput::from_result(result, Vec::new());
     output.warnings = warnings;
     Ok(output)
 }
@@ -144,7 +144,6 @@ pub async fn check_closed_references(
 pub fn check_invalid(
     path: &Path,
     project_detection: &checker::ProjectDetection,
-    _checker: &checker::StatusChecker,
     exclude_file_regexes: &[String],
 ) -> Result<CheckOutput> {
     let extraction = extract_todos(path, exclude_file_regexes)?;
