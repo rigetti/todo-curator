@@ -20,19 +20,19 @@ use todo_curator::{
 };
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
-    run_closed_reference_check_with_excludes(path, &[]).await
+    run_closed_reference_check_with_excludes(path, "").await
 }
 
 async fn run_closed_reference_check_with_excludes(
     path: PathBuf,
-    exclude_file_regexes: &[String],
+    exclude_file_regex: &str,
 ) -> CheckOutput {
     let checker = StatusChecker::new()
         .await
         .expect("Failed to initialize status checker");
     let project_detection = ProjectDetection::None;
 
-    check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
+    check_closed_references(path, &project_detection, &checker, exclude_file_regex)
         .await
         .expect("Failed to check closed references")
 }
@@ -367,7 +367,7 @@ fn test_invalid_projection_includes_simplification_warnings() {
     )
     .expect("Failed to write test file");
 
-    let extraction = extract_todos(&temp_dir, &[]).expect("Failed to extract TODOs");
+    let extraction = extract_todos(&temp_dir, "").expect("Failed to extract TODOs");
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     let output = check_invalid_from_extraction(&extraction, &ProjectDetection::None)
@@ -420,7 +420,7 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
     };
     std::fs::write(&test_file, file_content).expect("Failed to write test file");
 
-    let extraction = extract_todos(&test_file, &[]).expect("Failed to extract TODOs");
+    let extraction = extract_todos(&test_file, "").expect("Failed to extract TODOs");
     let checker = match StatusChecker::new().await {
         Ok(checker) => checker,
         Err(e) => {
@@ -481,8 +481,8 @@ async fn test_excluded_file_regex_skips_closed_reference_checks() {
     )
     .expect("Failed to write test file");
 
-    let excludes = vec!["todo-comments.md".to_string()];
-    let result = run_closed_reference_check_with_excludes(temp_root.clone(), &excludes).await;
+    let result =
+        run_closed_reference_check_with_excludes(temp_root.clone(), "todo-comments.md").await;
 
     let _ = std::fs::remove_dir_all(&temp_root);
 
@@ -604,8 +604,7 @@ fn test_lint_exclude_file_regexes() {
     )
     .unwrap();
 
-    let extractor =
-        TodoExtractor::with_exclude_file_regexes(&["skip_me\\.rs$".to_string()]).unwrap();
+    let extractor = TodoExtractor::with_exclude_file_regex("skip_me\\.rs$").unwrap();
     let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
 
     // Clean up

@@ -212,7 +212,7 @@ type ExtractorFn =
 pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
-    exclude_file_regexes: Vec<Regex>,
+    exclude_file_regex: Option<Regex>,
 }
 
 impl Default for TodoExtractor {
@@ -223,10 +223,10 @@ impl Default for TodoExtractor {
 
 impl TodoExtractor {
     pub fn new() -> Self {
-        Self::with_exclude_file_regexes(&[]).expect("default extractor regexes should compile")
+        Self::with_exclude_file_regex("").expect("empty string is a valid regex")
     }
 
-    pub fn with_exclude_file_regexes(exclude_file_regexes: &[String]) -> anyhow::Result<Self> {
+    pub fn with_exclude_file_regex(exclude_file_regex: &str) -> anyhow::Result<Self> {
         // Extract TODO reference candidates in two forms:
         // 1) TODO <single-ref>:
         // 2) TODO(<multiple-refs>) or TODO (<multiple-refs>)
@@ -530,19 +530,18 @@ impl TodoExtractor {
             ),
         ];
 
-        let exclude_file_regexes = exclude_file_regexes
-            .iter()
-            .map(|pattern| {
-                Regex::new(pattern).map_err(|e| {
-                    anyhow::anyhow!("Invalid --exclude-file-regex value '{pattern}': {e}")
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        let exclude_file_regex = if exclude_file_regex.trim().is_empty() {
+            None
+        } else {
+            Some(Regex::new(exclude_file_regex).map_err(|e| {
+                anyhow::anyhow!("Invalid --exclude-file-regex value '{exclude_file_regex}': {e}")
+            })?)
+        };
 
         Ok(Self {
             todo_ref_pattern,
             patterns,
-            exclude_file_regexes,
+            exclude_file_regex,
         })
     }
 
@@ -595,9 +594,9 @@ impl TodoExtractor {
                 .to_string();
 
             if self
-                .exclude_file_regexes
-                .iter()
-                .any(|pattern| pattern.is_match(&relative_file_path_str))
+                .exclude_file_regex
+                .as_ref()
+                .is_some_and(|pattern| pattern.is_match(&relative_file_path_str))
             {
                 continue;
             }
