@@ -68,8 +68,8 @@ impl CheckOutput {
 }
 
 /// Extract TODO references and lint violations in one pass.
-pub fn extract_todos(path: &Path, exclude_file_regexes: &[String]) -> Result<ExtractionResult> {
-    let extractor = todo::TodoExtractor::with_exclude_file_regexes(exclude_file_regexes)?;
+pub fn extract_todos(path: &Path, exclude_file_regex: &str) -> Result<ExtractionResult> {
+    let extractor = todo::TodoExtractor::with_exclude_file_regex(exclude_file_regex)?;
     extractor.extract_from_directory(path)
 }
 
@@ -134,9 +134,9 @@ pub async fn check_closed_references(
     path: PathBuf,
     project_detection: &checker::ProjectDetection,
     checker: &checker::StatusChecker,
-    exclude_file_regexes: &[String],
+    exclude_file_regex: &str,
 ) -> Result<CheckOutput> {
-    let extraction = extract_todos(&path, exclude_file_regexes)?;
+    let extraction = extract_todos(&path, exclude_file_regex)?;
     check_closed_from_extraction(&extraction, project_detection, checker).await
 }
 
@@ -144,9 +144,9 @@ pub async fn check_closed_references(
 pub fn check_invalid(
     path: &Path,
     project_detection: &checker::ProjectDetection,
-    exclude_file_regexes: &[String],
+    exclude_file_regex: &str,
 ) -> Result<CheckOutput> {
-    let extraction = extract_todos(path, exclude_file_regexes)?;
+    let extraction = extract_todos(path, exclude_file_regex)?;
     check_invalid_from_extraction(&extraction, project_detection)
 }
 

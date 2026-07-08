@@ -52,12 +52,10 @@ struct Args {
 
     #[arg(
         long,
-        action = clap::ArgAction::Append,
-        value_delimiter = ',',
         env = "TODO_CURATOR_EXCLUDE_FILE_REGEX",
-        help = "Regex patterns for files to exclude from linting (repeat flag or provide comma-separated values)"
+        help = "Regex pattern for files to exclude from linting"
     )]
-    exclude_file_regex: Vec<String>,
+    exclude_file_regex: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -144,11 +142,12 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-closed");
             let result =
-                check_closed_references(path, &project_detection, &checker, &exclude_file_regex)
+                check_closed_references(path, &project_detection, &checker, exclude_file_regex)
                     .await?;
             output_and_exit(&result, format, output_path)?;
         }
@@ -159,7 +158,8 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
-            let result = check_invalid(&path, &project_detection, &exclude_file_regex)?;
+            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
+            let result = check_invalid(&path, &project_detection, exclude_file_regex)?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckAll { args } => {
@@ -169,10 +169,11 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-all");
-            let extraction = extract_todos(&path, &exclude_file_regex)?;
+            let extraction = extract_todos(&path, exclude_file_regex)?;
             let mut closed_result =
                 check_closed_from_extraction(&extraction, &project_detection, &checker).await?;
             let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
@@ -211,10 +212,11 @@ async fn main() -> Result<()> {
                 output: output_path,
                 exclude_file_regex,
             } = args;
+            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-mr-todos");
-            let extraction = extract_todos(&path, &exclude_file_regex)?;
+            let extraction = extract_todos(&path, exclude_file_regex)?;
             check_mr_todos(
                 &extraction.references,
                 format,

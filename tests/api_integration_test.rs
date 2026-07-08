@@ -38,19 +38,19 @@ use todo_curator::{
 };
 
 async fn run_closed_reference_check(path: PathBuf) -> CheckOutput {
-    run_closed_reference_check_with_excludes(path, &[]).await
+    run_closed_reference_check_with_excludes(path, "").await
 }
 
 async fn run_closed_reference_check_with_excludes(
     path: PathBuf,
-    exclude_file_regexes: &[String],
+    exclude_file_regex: &str,
 ) -> CheckOutput {
     let checker = StatusChecker::new()
         .await
         .expect("Failed to initialize status checker");
     let project_detection = ProjectDetection::None;
 
-    check_closed_references(path, &project_detection, &checker, exclude_file_regexes)
+    check_closed_references(path, &project_detection, &checker, exclude_file_regex)
         .await
         .expect("Failed to check closed references")
 }
