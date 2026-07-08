@@ -1,3 +1,9 @@
+## 0.1.11 (2026-07-08)
+
+### Fixes
+
+- exclude-files must be a single string, not a list
+
 ## 0.1.10 (2026-07-07)
 
 ### Fixes
