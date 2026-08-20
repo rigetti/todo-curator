@@ -17,7 +17,9 @@ jobs:
           - runs-on: ubuntu-latest
           - runs-on: ubuntu-24.04-arm
           - runs-on: macos-14
-          - runs-on: macos-13
+          # Intel macOS runners are retired, so cross-compile from arm64.
+          - runs-on: macos-14
+            target: x86_64-apple-darwin
           - runs-on: windows-latest
     runs-on: ${{ matrix.runs-on }}
     steps:
@@ -26,10 +28,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build release binary
+        env:
+          CLI_BUILD_TARGET: ${{ matrix.target }}
         run: python scripts/ci_build_cli.py
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.runs-on }}
+          name: release-${{ matrix.runs-on }}-${{ matrix.target || 'native' }}
           path: release/
           if-no-files-found: error
 

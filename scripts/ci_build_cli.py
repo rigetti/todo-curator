@@ -26,6 +26,12 @@ print(f"os_name_machine: {os_name_machine}")
 
 
 def target_triple() -> str:
+    # Allows cross-compiling, e.g. building the x86_64 macOS binary on an
+    # arm64 macOS runner, since Intel macOS runners are being retired.
+    override = os.environ.get("CLI_BUILD_TARGET")
+    if override:
+        return override
+
     match os_name_machine:
         case ("darwin", "aarch64" | "arm64"):
             return "aarch64-apple-darwin"
