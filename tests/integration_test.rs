@@ -596,7 +596,7 @@ fn test_lint_exclude_file_regexes() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    fs::create_dir_all(&temp_dir.join("skip_dir")).unwrap();
+    fs::create_dir_all(temp_dir.join("skip_dir")).unwrap();
     fs::write(temp_dir.join("skip_me.rs"), "// TODO without a reference\n").unwrap();
     fs::write(
         temp_dir.join("include_me.rs"),

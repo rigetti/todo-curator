@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .expect("checker should be initialized for check-closed");
             let result =
-                check_closed_references(path, &project_detection, &checker, exclude_file_regex)
+                check_closed_references(path, &project_detection, checker, exclude_file_regex)
                     .await?;
             output_and_exit(&result, format, output_path)?;
         }
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
                 .expect("checker should be initialized for check-all");
             let extraction = extract_todos(&path, exclude_file_regex)?;
             let mut closed_result =
-                check_closed_from_extraction(&extraction, &project_detection, &checker).await?;
+                check_closed_from_extraction(&extraction, &project_detection, checker).await?;
             let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
             closed_result
                 .lint_violations
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
 
             // Also run MR check (best-effort: skip if not in MR context)
             let mr_issues: Vec<MrIssue> =
-                find_mr_todos(&extraction.references, &project_detection, &checker)
+                find_mr_todos(&extraction.references, &project_detection, checker)
                     .await
                     .unwrap_or_default();
 
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
                 format,
                 output_path,
                 &project_detection,
-                &checker,
+                checker,
             )
             .await?;
         }
