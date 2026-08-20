@@ -25,7 +25,8 @@ command = "git push"
 
 [[workflows.steps]]
 type = "Command"
-command = "git push --tags -o ci.skip"
+# `-o ci.skip` is a GitLab push option, which GitHub does not accept.
+command = "git push --tags"
 
 [[workflows]]
 name = "get-version"

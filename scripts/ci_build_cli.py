@@ -124,8 +124,10 @@ def main() -> None:
     )
 
     if os_name == "linux":
-        _run_check(["apt-get", "update"])
-        _run_check(["apt-get", "install", "-y", "musl-tools"])
+        # CI images run as root; hosted GitHub runners do not.
+        sudo = [] if os.geteuid() == 0 else ["sudo"]
+        _run_check(sudo + ["apt-get", "update"])
+        _run_check(sudo + ["apt-get", "install", "-y", "musl-tools"])
         os.environ["CC_x86_64_unknown_linux_musl"] = "musl-gcc"
 
     _install_rustup()

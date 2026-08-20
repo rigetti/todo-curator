@@ -1,0 +1,65 @@
+name: CLI release
+
+# Builds the todo-curator binary for each supported platform and attaches the
+# results to the corresponding GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: "startsWith(github.event.head_commit.message, 'chore: prepare release') || github.event_name == 'workflow_dispatch'"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+          - runs-on: ubuntu-24.04-arm
+          - runs-on: macos-14
+          - runs-on: macos-13
+          - runs-on: windows-latest
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build release binary
+        run: python scripts/ci_build_cli.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.runs-on }}
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # Only a release-preparation commit has a tag to attach binaries to.
+    if: "startsWith(github.event.head_commit.message, 'chore: prepare release')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: rigetti/qcs-gha-infrastructure/actions/setup-knope@main
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Attach binaries to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(knope get-version)"
+          # knope tags releases as vX.Y.Z; fall back to a bare version tag.
+          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+            tag="v${version}"
+          else
+            tag="${version}"
+          fi
+          ls -l release
+          gh release upload "$tag" release/* --clobber

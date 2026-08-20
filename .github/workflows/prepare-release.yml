@@ -1,0 +1,16 @@
+name: Prepare release
+
+# Runs knope's `release` workflow: bumps the version, updates CHANGELOG.md,
+# commits "chore: prepare release <version>", tags, and pushes. The pushed
+# commit triggers cli-release.yml, which builds the binaries and attaches them
+# to the GitHub release.
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/knope-release.yml@main
+    secrets:
+      # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
+      # not trigger cli-release.yml.
+      token: ${{ secrets.RELEASE_TOKEN }}

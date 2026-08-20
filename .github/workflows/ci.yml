@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rust:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@main
+    with:
+      # The API integration tests live in separate jobs below, because they
+      # need forge credentials, so this job does not use --all-features.
+      test-command: cargo nextest run
+
+  knope-dry-run:
+    if: github.event_name == 'pull_request'
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/knope-dry-run.yml@main
+
+  api-integration:
+    name: api-integration (${{ matrix.name }})
+    # Secrets are not available to pull requests from forks, so these jobs are
+    # skipped there rather than failing.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: github
+            features: test-integration-github
+          - name: gitlab
+            features: test-integration-gitlab
+          - name: combined
+            features: test-integration-github,test-integration-gitlab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rigetti/qcs-gha-infrastructure/actions/setup-rust@main
+        with:
+          cache-key: api-integration
+      - name: Run API integration tests
+        env:
+          GH_TOKEN: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+          GITLAB_TOKEN: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
+        run: |
+          cargo test --test api_integration_test \
+            --features ${{ matrix.features }} --no-fail-fast
