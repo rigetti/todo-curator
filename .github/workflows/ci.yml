@@ -22,14 +22,21 @@ jobs:
     uses: rigetti/qcs-gha-infrastructure/.github/workflows/knope-dry-run.yml@main
 
   api-integration:
-    # Only the GitHub half of the API integration suite runs in CI: this
-    # repository has no GitLab credentials. The `test-integration-gitlab`
-    # feature still works locally for anyone with a GitLab token.
-    #
-    # Secrets are not available to pull requests from forks, so this job is
+    name: api-integration (${{ matrix.name }})
+    # Secrets are not available to pull requests from forks, so these jobs are
     # skipped there rather than failing.
     if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: github
+            features: test-integration-github
+          - name: gitlab
+            features: test-integration-gitlab
+          - name: combined
+            features: test-integration-github,test-integration-gitlab
     steps:
       - uses: actions/checkout@v4
       - uses: rigetti/qcs-gha-infrastructure/actions/setup-rust@main
@@ -38,6 +45,7 @@ jobs:
       - name: Run API integration tests
         env:
           GH_TOKEN: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+          GITLAB_TOKEN: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
         run: |
           cargo test --test api_integration_test \
-            --features test-integration-github --no-fail-fast
+            --features ${{ matrix.features }} --no-fail-fast
