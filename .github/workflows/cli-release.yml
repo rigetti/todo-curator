@@ -10,34 +10,9 @@ on:
 jobs:
   build:
     if: "startsWith(github.event.head_commit.message, 'chore: prepare release') || github.event_name == 'workflow_dispatch'"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runs-on: ubuntu-latest
-          - runs-on: ubuntu-24.04-arm
-          - runs-on: macos-14
-          - runs-on: windows-latest
-    runs-on: ${{ matrix.runs-on }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      # ci_build_cli.py installs its own rustup toolchain, so this is here for
-      # the sccache wrapper and the registry cache, not for the toolchain.
-      - uses: rigetti/qcs-gha-infrastructure/actions/setup-rust@main
-        with:
-          cache-key: cli-release
-      - name: Build release binary
-        env:
-          CLI_BUILD_TARGET: ${{ matrix.target }}
-        run: python scripts/ci_build_cli.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.runs-on }}-${{ matrix.target || 'native' }}
-          path: release/
-          if-no-files-found: error
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@main
+    with:
+      bin: todo-curator
 
   publish:
     needs: build
