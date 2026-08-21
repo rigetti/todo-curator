@@ -17,9 +17,6 @@ jobs:
           - runs-on: ubuntu-latest
           - runs-on: ubuntu-24.04-arm
           - runs-on: macos-14
-          # Intel macOS runners are retired, so cross-compile from arm64.
-          - runs-on: macos-14
-            target: x86_64-apple-darwin
           - runs-on: windows-latest
     runs-on: ${{ matrix.runs-on }}
     steps:
