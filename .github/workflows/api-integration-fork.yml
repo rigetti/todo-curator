@@ -1,0 +1,53 @@
+name: API integration (fork)
+
+# The credentialed API integration tests for pull requests from forks.
+#
+# `pull_request` runs from a fork never receive secrets, no matter what is
+# approved, so these tests run on `pull_request_target` instead: the workflow
+# definition and the secrets come from the base repository, and only the code
+# under test comes from the fork.
+#
+# The `fork-integration-tests` environment carries required reviewers, so each
+# run waits for a maintainer before the fork's code is checked out or executed.
+# Unit tests, formatting, and clippy are unaffected — ci.yml runs those on every
+# pull request with no approval and no secrets.
+#
+# SECURITY: approving a run here executes the fork's code with the GitHub and
+# GitLab tokens in scope. Read the whole diff — build scripts, proc macros,
+# Cargo.toml patches, test fixtures — before approving.
+on:
+  pull_request_target:
+
+concurrency:
+  group: api-integration-fork-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api-integration:
+    name: api-integration (${{ matrix.name }})
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: github
+            features: test-integration-github
+          - name: gitlab
+            features: test-integration-gitlab
+          - name: combined
+            features: test-integration-github,test-integration-gitlab
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@main
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      environment: fork-integration-tests
+      # A cache written by a fork's build would be visible to base-branch runs.
+      cache: false
+      test-command: >-
+        cargo test --test api_integration_test
+        --features ${{ matrix.features }} --no-fail-fast
+    secrets:
+      github-api-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+      gitlab-api-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
