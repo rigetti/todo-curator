@@ -1,3 +1,13 @@
+## 0.1.12 (2026-08-21)
+
+### Features
+
+- migrate CI from GitLab CI to GitHub Actions
+
+### Fixes
+
+- silence needless-borrow lints on current stable clippy
+
 ## 0.1.11 (2026-07-08)
 
 ### Fixes
