@@ -97,6 +97,44 @@ async fn test_open_gitlab_issue() {
     );
 }
 
+/// Test that the tool correctly identifies an open GitHub issue
+/// Uses issue #1 in rigetti/todo-curator, which is kept permanently open
+#[tokio::test]
+#[cfg(feature = "test-integration-github")]
+async fn test_open_github_issue() {
+    let _gh_token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN must be set for this test");
+
+    // Create a temporary test file with a TODO referencing the open issue
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("test_open_github_issue.rs");
+    std::fs::write(&test_file, "// TODO github.com/rigetti/todo-curator#1:\n")
+        .expect("Failed to write test file");
+
+    // Call check_closed_references directly
+    let result = run_closed_reference_check(test_file.clone()).await;
+
+    // Clean up
+    let _ = std::fs::remove_file(&test_file);
+
+    // The issue is open, so it should NOT appear in closed issues
+    assert!(
+        result.closed.is_empty(),
+        "Open issue should not be reported as closed. Got: {:?}",
+        result.closed
+    );
+
+    assert!(
+        result.not_found.is_empty(),
+        "Open issue should not be reported as not found. Got: {:?}",
+        result.not_found
+    );
+
+    assert_eq!(
+        result.status, "success",
+        "Status should be success for open issue"
+    );
+}
+
 /// Test that the tool correctly identifies a closed GitHub issue
 /// Uses rust-lang/rust#1 which is a well-known closed issue
 #[tokio::test]
