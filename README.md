@@ -53,13 +53,6 @@ it prints `TODO references that can be shortened` with a suggested shorter form.
 
 ## Integration with CI/CD
 
-### GitHub Actions
-
 Use the reusable workflows and composite actions from
 [`rigetti/qcs-gha-infrastructure`](https://github.com/rigetti/qcs-gha-infrastructure).
 This repository's own `.github/workflows/` directory is a working example.
-
-### GitLab CI
-
-Use the job templates from `qcs-infrastructure`.
-See `https://gitlab.com/rigetti/qcs/utilities/rust-template/-/blob/main/.gitlab-ci.yml?ref_type=heads`.

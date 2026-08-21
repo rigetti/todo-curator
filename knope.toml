@@ -5,6 +5,13 @@ versioned_files = [
 ]
 changelog = "CHANGELOG.md"
 
+# Without this, the `Release` step only creates a Git tag; declaring the forge
+# makes it publish a GitHub release with the changelog entry as its notes.
+# `cli-release.yml` then attaches the built binaries to that release.
+[github]
+owner = "rigetti"
+repo = "todo-curator"
+
 [[workflows]]
 name = "release"
 
