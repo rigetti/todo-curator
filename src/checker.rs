@@ -82,7 +82,7 @@ impl StatusChecker {
     /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
     pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
         // Check for CI_PROJECT_PATH first (GitLab CI)
-        if let Ok(ci_project_path) = env::var("CI_PROJECT_PATH") {
+        if let Some(ci_project_path) = Self::env_var("CI_PROJECT_PATH") {
             return ProjectDetection::GitLab(Self::normalize_project_path(&ci_project_path));
         }
 
@@ -185,16 +185,28 @@ impl StatusChecker {
         Ok(())
     }
 
+    /// Read an environment variable, treating a value that is empty or entirely
+    /// whitespace as if the variable were unset.
+    ///
+    /// CI systems routinely expand an unset secret to an empty string, and an
+    /// empty token is never usable: taking it at face value turns "no
+    /// credentials for this forge" into a 401 from that forge.
+    fn env_var(name: &str) -> Option<String> {
+        let value = env::var(name).ok()?;
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            tracing::debug!(name, "ignoring environment variable set to an empty value");
+            return None;
+        }
+        Some(trimmed.to_string())
+    }
+
     fn github_token() -> Option<String> {
-        env::var("GITHUB_TOKEN")
-            .or_else(|_| env::var("GH_TOKEN"))
-            .ok()
+        Self::env_var("GITHUB_TOKEN").or_else(|| Self::env_var("GH_TOKEN"))
     }
 
     fn gitlab_token() -> Option<String> {
-        env::var("GITLAB_TOKEN")
-            .or_else(|_| env::var("GL_TOKEN"))
-            .ok()
+        Self::env_var("GITLAB_TOKEN").or_else(|| Self::env_var("GL_TOKEN"))
     }
 
     fn init_github_client(token: Option<String>) -> Result<Option<Octocrab>> {
@@ -211,7 +223,7 @@ impl StatusChecker {
     }
 
     fn normalized_gitlab_host() -> String {
-        let gitlab_host = env::var("GITLAB_URL").unwrap_or_else(|_| "gitlab.com".to_string());
+        let gitlab_host = Self::env_var("GITLAB_URL").unwrap_or_else(|| "gitlab.com".to_string());
 
         let mut cleaned = gitlab_host
             .trim()
@@ -254,9 +266,9 @@ impl StatusChecker {
     }
 
     fn gitlab_token_type() -> String {
-        env::var("GITLAB_TOKEN_TYPE")
-            .or_else(|_| env::var("GL_TOKEN_TYPE"))
-            .unwrap_or_else(|_| "pat".to_string())
+        Self::env_var("GITLAB_TOKEN_TYPE")
+            .or_else(|| Self::env_var("GL_TOKEN_TYPE"))
+            .unwrap_or_else(|| "pat".to_string())
             .to_ascii_lowercase()
     }
 
