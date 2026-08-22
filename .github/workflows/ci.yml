@@ -22,6 +22,26 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: rigetti/qcs-gha-infrastructure/.github/workflows/knope-dry-run.yml@main
 
+  # Exercises action.yml end to end: ubi install, then a real check against a
+  # fixture directory. Scanning the whole repository is not an option — this
+  # repository's docs, tests, and source all discuss TODO patterns in prose,
+  # which the checker correctly reads as malformed references.
+  action:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          # The version input defaults to github.action_ref, which is empty for
+          # a local `uses: ./`, so the latest release is named explicitly. This
+          # tests the packaging, not this branch's binary.
+          version: v0.1.12
+          command: check-all
+          path: data/self-test
+          github-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+          gitlab-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
+
   # The credentialed API integration tests. This job only covers branches in
   # this repository, where the code is already trusted; pull requests from forks
   # are handled by api-integration-fork.yml, which requires a maintainer's

@@ -53,6 +53,37 @@ it prints `TODO references that can be shortened` with a suggested shorter form.
 
 ## Integration with CI/CD
 
-Use the reusable workflows and composite actions from
+### GitHub Actions
+
+This repository ships an action that installs `todo-curator` from its GitHub
+releases with [ubi](https://github.com/houseabsolute/ubi) and runs a check:
+
+```yaml
+- uses: rigetti/todo-curator@v0.1.12
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    gitlab-token: ${{ secrets.MY_GITLAB_TOKEN }}  # only for GitLab references
+    command: check-all        # or check-closed / check-invalid /
+                              # check-mr-todos / validate-auth
+    args: --format json       # optional
+    path: .                   # optional
+    exclude-file-regex: ""    # optional; a single regex, not a list
+```
+
+The `version` to install defaults to the ref the action was called with, so
+`@v0.1.12` above installs v0.1.12 and there is only one version to pin.
+
+`secrets.GITHUB_TOKEN` covers both the download and same-repository references.
+References to other repositories, or to GitLab, need a token with access to
+them. `check-invalid` needs no credentials at all. A token is also what keeps
+the install off GitHub's unauthenticated API rate limit, which can be as low as
+60 requests per hour per IP.
+
+If a repository's own tests or docs contain TODO-shaped text, set
+`exclude-file-regex` or the checks will flag them.
+
+### Shared QCS workflows
+
+Reusable Rust CI and release workflows live in
 [`rigetti/qcs-gha-infrastructure`](https://github.com/rigetti/qcs-gha-infrastructure).
 This repository's own `.github/workflows/` directory is a working example.
