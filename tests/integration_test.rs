@@ -326,6 +326,45 @@ fn test_check_invalid_skips_auth_validation() {
     );
 }
 
+/// Test that an empty GitLab token is treated as no token at all, rather than
+/// as a token that fails to build a client. CI systems routinely pass unset
+/// secrets through as empty strings.
+#[test_log::test]
+fn test_empty_gitlab_token_is_not_configured_auth() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let temp_dir = std::env::temp_dir().join("todo_curator_empty_gitlab_token");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // A GitHub reference, in a directory with no GitLab references at all.
+    let test_file = temp_dir.join("todo.rs");
+    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1:\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
+        .arg("check-closed")
+        .arg("-p")
+        .arg(&temp_dir)
+        .env("GITHUB_TOKEN", "invalid_token")
+        .env("GITLAB_TOKEN", "")
+        .env("GL_TOKEN", "")
+        .env_remove("RUST_LOG")
+        .current_dir(manifest_dir)
+        .output()
+        .expect("Failed to execute todo-curator");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        !stderr.contains("Failed to initialize GitLab client"),
+        "An empty GITLAB_TOKEN should be ignored, not used to build a client. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
+    );
+}
+
 /// Test that FIXME markers are reported as improper TODO-like violations.
 #[test_log::test]
 fn test_extractor_reports_fixme_as_invalid_todo_like() {
