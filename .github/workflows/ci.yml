@@ -18,10 +18,6 @@ jobs:
       # need forge credentials, so this job does not use --all-features.
       test-command: cargo nextest run
 
-  knope-dry-run:
-    if: github.event_name == 'pull_request'
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/knope-dry-run.yml@main
-
   # Exercises action.yml end to end: ubi install, then a real check against a
   # fixture directory. Scanning the whole repository is not an option — this
   # repository's docs, tests, and source all discuss TODO patterns in prose,

@@ -1,0 +1,22 @@
+name: Prepare prerelease
+
+# Cuts a release candidate from the branch this is dispatched on, so it can be
+# installed and tested before merging. Dispatching on main fails: merging there
+# releases automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease-label:
+        description: "Prerelease label; defaults to 'rc'."
+        required: false
+        default: ""
+
+jobs:
+  prepare-prerelease:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@main
+    with:
+      prerelease-label: ${{ inputs.prerelease-label }}
+    secrets:
+      # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
+      # not trigger cli-release.yml.
+      token: ${{ secrets.RELEASE_TOKEN }}
