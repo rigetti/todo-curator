@@ -22,18 +22,18 @@ type = "PrepareRelease"
 type = "Command"
 command = 'git commit -m "chore: prepare release $version"'
 
-[[workflows.steps]]
-type = "Release"
-
+# The commit must reach the remote before Release runs: with a forge
+# configured, Release creates the GitHub release through the API, and GitHub
+# rejects a release whose target commit it has never seen. The push is also
+# what triggers cli-release.yml to build the binaries.
 [[workflows.steps]]
 type = "Command"
-# This must trigger the job to actually build the CLI binary and installers.
 command = "git push"
 
+# Creates the tag as part of publishing the release, so there are no local tags
+# left to push afterwards.
 [[workflows.steps]]
-type = "Command"
-# `-o ci.skip` is a GitLab push option, which GitHub does not accept.
-command = "git push --tags"
+type = "Release"
 
 [[workflows]]
 name = "get-version"
