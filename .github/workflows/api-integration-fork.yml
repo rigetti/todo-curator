@@ -39,7 +39,7 @@ jobs:
             features: test-integration-gitlab
           - name: combined
             features: test-integration-github,test-integration-gitlab
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@main
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.1.0
     with:
       ref: ${{ github.event.pull_request.head.sha }}
       environment: fork-integration-tests

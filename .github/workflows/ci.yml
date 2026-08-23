@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@main
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.1.0
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
@@ -26,7 +26,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./
         with:
           # The version input defaults to github.action_ref, which is empty for
@@ -56,7 +56,7 @@ jobs:
             features: test-integration-gitlab
           - name: combined
             features: test-integration-github,test-integration-gitlab
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@main
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.1.0
     with:
       cache-key: api-integration
       test-command: >-

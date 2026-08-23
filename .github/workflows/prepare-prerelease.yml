@@ -13,7 +13,7 @@ on:
 
 jobs:
   prepare-prerelease:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@main
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@v0.1.0
     with:
       prerelease-label: ${{ inputs.prerelease-label }}
     secrets:
