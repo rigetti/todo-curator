@@ -1,3 +1,14 @@
+## 0.1.13 (2026-08-23)
+
+### Features
+
+- ship a GitHub Action that installs todo-curator with ubi
+
+### Fixes
+
+- treat an empty environment variable as unset
+- push the release commit before publishing the release
+
 ## 0.1.12 (2026-08-21)
 
 ### Features
