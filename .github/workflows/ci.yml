@@ -46,15 +46,29 @@ jobs:
             echo "command=check-invalid" >> "${GITHUB_OUTPUT}"
           fi
 
+      # The version input defaults to github.action_ref, which is empty for a
+      # local `uses: ./`. Resolving the newest release keeps this from rotting:
+      # a hardcoded tag silently keeps testing an old artifact after every
+      # release. This tests the packaging, not this branch's binary.
+      - name: Find the latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo '${{ github.repository }}' --json tagName -q .tagName)"
+          echo "Latest release: ${tag}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
       - uses: ./
         with:
-          # The version input defaults to github.action_ref, which is empty for
-          # a local `uses: ./`, so the latest release is named explicitly. This
-          # tests the packaging, not this branch's binary.
-          version: v0.1.12
+          version: ${{ steps.release.outputs.tag }}
           command: ${{ steps.mode.outputs.command }}
           path: data/self-test
-          github-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+          # Falls back to the job's own token so the ubi download is
+          # authenticated even where the repository secrets are unavailable —
+          # GitHub's unauthenticated API allows as few as 60 requests an hour.
+          github-token: ${{ secrets.TODO_CURATOR_GH_TOKEN || github.token }}
           gitlab-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
 
   # The credentialed API integration tests. This job only covers branches in
