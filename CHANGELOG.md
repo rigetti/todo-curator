@@ -1,3 +1,9 @@
+## 0.1.14 (2026-08-23)
+
+### Fixes
+
+- keep an unset token unset, and stop pinning a stale release
+
 ## 0.1.13 (2026-08-23)
 
 ### Features
