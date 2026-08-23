@@ -47,17 +47,35 @@ jobs:
           fi
 
       # The version input defaults to github.action_ref, which is empty for a
-      # local `uses: ./`. Resolving the newest release keeps this from rotting:
-      # a hardcoded tag silently keeps testing an old artifact after every
-      # release. This tests the packaging, not this branch's binary.
-      - name: Find the latest release
+      # local `uses: ./`. Resolving a release at run time keeps this from
+      # rotting: a hardcoded tag silently keeps testing an old artifact after
+      # every release. This tests the packaging, not this branch's binary.
+      #
+      # It must be the newest release *with binaries attached*, not simply the
+      # newest. knope publishes the release and cli-release.yml uploads the
+      # binaries minutes later, so the newest release has no assets at all
+      # during that window, and ubi fails with "could not find a release asset
+      # after filtering for valid extensions".
+      - name: Find the latest release with binaries attached
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="$(gh release view --repo '${{ github.repository }}' --json tagName -q .tagName)"
-          echo "Latest release: ${tag}"
+          tag="$(
+            gh api --paginate '/repos/${{ github.repository }}/releases' \
+              | jq -r 'map(select(.draft == false
+                                  and .prerelease == false
+                                  and ([.assets[].name]
+                                       | any(startswith("todo-curator-")))))
+                       | first
+                       | .tag_name // empty'
+          )"
+          if [[ -z "${tag}" ]]; then
+            echo "::error::No release has a todo-curator binary attached."
+            exit 1
+          fi
+          echo "Testing against ${tag}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
       - uses: ./
