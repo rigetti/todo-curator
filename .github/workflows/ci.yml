@@ -23,7 +23,11 @@ jobs:
   # repository's docs, tests, and source all discuss TODO patterns in prose,
   # which the checker correctly reads as malformed references.
   action:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -45,7 +49,11 @@ jobs:
   # there is nothing to approve on this trigger.
   api-integration:
     name: api-integration (${{ matrix.name }})
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]')
     strategy:
       fail-fast: false
       matrix:
@@ -65,3 +73,40 @@ jobs:
     secrets:
       github-api-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
       gitlab-api-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
+
+  # The single required status check. Everything above may legitimately skip —
+  # forks have no secrets, Dependabot gets none either — and a skipped check
+  # reads as neutral rather than passing, which would block those pull requests
+  # forever if they were required individually.
+  #
+  # This job is required instead: it fails if any job failed or was cancelled,
+  # and separately asserts that the credentialed jobs did run whenever they were
+  # supposed to, so a broken `if` cannot pass the gate by skipping everything.
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [rust, action, api-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          # Whether the credentialed jobs were expected to run at all.
+          CREDENTIALED_EXPECTED: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+        run: |
+          set -euo pipefail
+          echo "${RESULTS}" | jq .
+
+          if ! echo "${RESULTS}" | jq -e 'all(.[].result; . == "success" or . == "skipped")' >/dev/null; then
+            echo "::error::A required job failed or was cancelled."
+            exit 1
+          fi
+
+          if [[ "${CREDENTIALED_EXPECTED}" == "true" ]]; then
+            if ! echo "${RESULTS}" | jq -e '.["api-integration"].result == "success" and .action.result == "success"' >/dev/null; then
+              echo "::error::The credentialed jobs were expected to run here but did not succeed."
+              exit 1
+            fi
+          else
+            echo "Credentialed jobs skipped: no secrets are available for this event."
+          fi
