@@ -28,10 +28,6 @@ permissions:
 jobs:
   api-integration:
     name: api-integration (${{ matrix.name }})
-    # Load-bearing: pull_request_target runs in base context with full access
-    # to secrets, so this must stay restricted to genuine forks. Dependabot's
-    # branches live in this repository, so they do not match, and Dependabot
-    # pull requests never reach a workflow that holds these tokens.
     if: github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
