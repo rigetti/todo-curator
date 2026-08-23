@@ -65,6 +65,9 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
+        # An empty token is worse than none: GitHub answers 401 to an empty
+        # Authorization header, even for a public repository. Keep it unset.
+        [[ -z "${GITHUB_TOKEN:-}" ]] && unset GITHUB_TOKEN
         export TARGET="${RUNNER_TEMP}/ubi/bin"
         mkdir -p "${TARGET}"
         curl --silent --location \
@@ -77,6 +80,9 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
+        # An empty token is worse than none: GitHub answers 401 to an empty
+        # Authorization header, even for a public repository. Keep it unset.
+        [[ -z "${GITHUB_TOKEN:-}" ]] && unset GITHUB_TOKEN
         # An empty --tag would make ubi install whatever release is newest,
         # which is never what a pinned CI run wants.
         tag='${{ inputs.version }}'
@@ -100,6 +106,9 @@ runs:
         EXCLUDE: ${{ inputs.exclude-file-regex }}
       run: |
         set -euo pipefail
+        # Same reasoning as above, for every forge todo-curator may talk to.
+        [[ -z "${GITHUB_TOKEN:-}" ]] && unset GITHUB_TOKEN GH_TOKEN
+        [[ -z "${GITLAB_TOKEN:-}" ]] && unset GITLAB_TOKEN
         # Passed as a flag rather than TODO_CURATOR_EXCLUDE_FILE_REGEX so that
         # an unset input means "no filter" instead of "an empty regex".
         opts=()
