@@ -13,7 +13,7 @@ on:
 
 jobs:
   prepare-release:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-release.yml@v0.1.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-release.yml@v0.1.1
     secrets:
       # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
       # not trigger cli-release.yml.

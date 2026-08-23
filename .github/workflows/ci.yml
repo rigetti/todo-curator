@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.1.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.1.1
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
@@ -23,21 +23,36 @@ jobs:
   # repository's docs, tests, and source all discuss TODO patterns in prose,
   # which the checker correctly reads as malformed references.
   action:
-    if: >-
-      github.event_name == 'push'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # check-all resolves references against both forges, so it needs tokens,
+      # and tokens are unavailable to fork pull requests (never passed) and to
+      # Dependabot (which gets only Dependabot secrets). Those runs fall back to
+      # check-invalid, which needs no credentials: less coverage, but it still
+      # exercises the ubi install and the packaged action end to end — which is
+      # exactly what a Dependabot bump to actions/checkout should be tested on.
+      - name: Decide which check the credentials allow
+        id: mode
+        env:
+          CREDENTIALED: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+        run: |
+          set -euo pipefail
+          if [[ "${CREDENTIALED}" == "true" ]]; then
+            echo "command=check-all" >> "${GITHUB_OUTPUT}"
+          else
+            echo "No forge credentials for this event; running check-invalid."
+            echo "command=check-invalid" >> "${GITHUB_OUTPUT}"
+          fi
+
       - uses: ./
         with:
           # The version input defaults to github.action_ref, which is empty for
           # a local `uses: ./`, so the latest release is named explicitly. This
           # tests the packaging, not this branch's binary.
           version: v0.1.12
-          command: check-all
+          command: ${{ steps.mode.outputs.command }}
           path: data/self-test
           github-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
           gitlab-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
@@ -64,7 +79,7 @@ jobs:
             features: test-integration-gitlab
           - name: combined
             features: test-integration-github,test-integration-gitlab
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.1.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.1.1
     with:
       cache-key: api-integration
       test-command: >-
@@ -102,8 +117,15 @@ jobs:
             exit 1
           fi
 
+          # The action self-test needs no credentials in its check-invalid mode,
+          # so it has no excuse to skip on any event.
+          if ! echo "${RESULTS}" | jq -e '.action.result == "success"' >/dev/null; then
+            echo "::error::The action self-test did not run."
+            exit 1
+          fi
+
           if [[ "${CREDENTIALED_EXPECTED}" == "true" ]]; then
-            if ! echo "${RESULTS}" | jq -e '.["api-integration"].result == "success" and .action.result == "success"' >/dev/null; then
+            if ! echo "${RESULTS}" | jq -e '.["api-integration"].result == "success"' >/dev/null; then
               echo "::error::The credentialed jobs were expected to run here but did not succeed."
               exit 1
             fi
