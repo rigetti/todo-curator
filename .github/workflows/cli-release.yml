@@ -1,33 +1,21 @@
 name: CLI release
 
-# The second half of the release: builds the todo-curator binary for each
-# supported platform, then runs knope's Release step over those binaries.
+# The second half of a release: builds the binaries and runs knope's Release
+# step over them. knope.toml's `draft-release` workflow, run on merge to main,
+# only bumps and pushes — that push is what triggers this.
 #
-# knope.toml splits the release deliberately. Its `draft-release` workflow, run
-# on merge to main, only bumps and pushes; `publish-release` runs here, where
-# the assets exist. With assets configured, the Release step creates the GitHub
-# release as a draft, uploads them, and publishes only then — so a release is
-# never visible without the binaries that make it installable.
+# Splitting it that way is what keeps a release from ever being visible without
+# the binaries that make it installable; see rust-cli-release.yml.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
-    if: "startsWith(github.event.head_commit.message, 'chore: prepare release') || github.event_name == 'workflow_dispatch'"
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.2.1
+  release:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-release.yml@v0.3.0
     with:
       bin: todo-curator
-
-  # knope's Release step, with assets configured, creates the release as a
-  # draft, uploads the binaries, and publishes only then — so the release never
-  # exists in the assetless state that makes it uninstallable.
-  publish:
-    needs: build
-    # Only a release-preparation commit has a version to release.
-    if: "startsWith(github.event.head_commit.message, 'chore: prepare release')"
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/publish-release.yml@v0.2.1
     secrets:
       # A PAT rather than GITHUB_TOKEN, so publishing the release can trigger
       # any workflow that watches for it.
