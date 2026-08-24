@@ -5,8 +5,21 @@ versioned_files = [
 ]
 changelog = "CHANGELOG.md"
 
+# Assets are attached by the `publish-release` workflow below. Declaring them
+# makes knope create the release as a draft, upload each asset, and publish
+# only then — so the release is never visible without the binaries that make it
+# installable.
+assets = "release/*"
+
+# Required for the Release step to publish to GitHub rather than only tagging.
+[github]
+owner = "rigetti"
+repo = "todo-curator"
+
+# Splitting the release in two is what lets those binaries exist by then: this
+# half bumps the version and pushes, which triggers the cross-platform build.
 [[workflows]]
-name = "release"
+name = "draft-release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
@@ -20,17 +33,14 @@ command = 'git commit -m "chore: prepare release $version"'
 type = "Command"
 command = "git push"
 
-# With no forge configured, this only creates a Git tag locally. That is
-# deliberate: cli-release.yml publishes the GitHub release once the binaries
-# exist, so a release is never visible without its assets. Publishing here
-# instead would leave every consumer of `rigetti/todo-curator@vX.Y.Z` unable to
-# install for the minutes the cross-platform build takes.
-[[workflows.steps]]
-type = "Release"
+# Run by cli-release.yml once the binaries are built and downloaded into
+# ./release. Release creates the tag and the GitHub release, so nothing here
+# pushes tags.
+[[workflows]]
+name = "publish-release"
 
 [[workflows.steps]]
-type = "Command"
-command = "git push --tags"
+type = "Release"
 
 [[workflows]]
 name = "get-version"
