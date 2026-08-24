@@ -16,7 +16,7 @@ on:
 jobs:
   build:
     if: "startsWith(github.event.head_commit.message, 'chore: prepare release') || github.event_name == 'workflow_dispatch'"
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.2.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.2.1
     with:
       bin: todo-curator
 
@@ -27,7 +27,7 @@ jobs:
     needs: build
     # Only a release-preparation commit has a version to release.
     if: "startsWith(github.event.head_commit.message, 'chore: prepare release')"
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/publish-release.yml@v0.2.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/publish-release.yml@v0.2.1
     secrets:
       # A PAT rather than GITHUB_TOKEN, so publishing the release can trigger
       # any workflow that watches for it.

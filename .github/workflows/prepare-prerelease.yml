@@ -3,6 +3,11 @@ name: Prepare prerelease
 # Cuts a release candidate from the branch this is dispatched on, so it can be
 # installed and tested before merging. Dispatching on main fails: merging there
 # releases automatically.
+#
+# This runs the whole release itself — draft, build, publish — rather than
+# leaving the second half to cli-release.yml. cli-release.yml is triggered by a
+# push to main, and a prerelease commit lands on a feature branch, so nothing
+# there would ever fire for it.
 on:
   workflow_dispatch:
     inputs:
@@ -12,14 +17,35 @@ on:
         default: ""
 
 jobs:
-  prepare-prerelease:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@v0.2.0
+  # Bumps to a prerelease version, commits, and pushes to this branch.
+  draft:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@v0.2.1
     with:
       prerelease-label: ${{ inputs.prerelease-label }}
-      # The Release step runs later, from cli-release.yml, once the binaries
-      # it attaches exist.
+      # The Release step runs in the publish job below, once the binaries it
+      # attaches exist.
       knope-workflow: draft-release
     secrets:
       # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
-      # not trigger cli-release.yml.
+      # not trigger anything downstream.
+      token: ${{ secrets.RELEASE_TOKEN }}
+
+  # Builds the branch tip, which by now includes the version bump above.
+  build:
+    needs: draft
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.2.1
+    with:
+      bin: todo-curator
+      # The branch tip, not the commit this run started at, which predates the
+      # version bump the draft job just pushed.
+      ref: ${{ github.ref }}
+
+  # knope's Release step: creates the release as a draft, uploads the binaries,
+  # publishes only then, and marks it as a prerelease from the version itself.
+  publish:
+    needs: build
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/publish-release.yml@v0.2.1
+    with:
+      ref: ${{ github.ref }}
+    secrets:
       token: ${{ secrets.RELEASE_TOKEN }}
