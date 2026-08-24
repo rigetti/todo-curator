@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.1.1
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.3.0
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
@@ -47,17 +47,37 @@ jobs:
           fi
 
       # The version input defaults to github.action_ref, which is empty for a
-      # local `uses: ./`. Resolving the newest release keeps this from rotting:
-      # a hardcoded tag silently keeps testing an old artifact after every
-      # release. This tests the packaging, not this branch's binary.
+      # local `uses: ./`. Resolving a release at run time keeps this from
+      # rotting: a hardcoded tag silently keeps testing an old artifact after
+      # every release. This tests the packaging, not this branch's binary.
+      #
+      # cli-release.yml publishes a release together with its binaries, so the
+      # latest release should always have them. Check rather than assume: if it
+      # does not, ubi reports only "could not find a release asset after
+      # filtering for valid extensions" with an empty list, which is a poor
+      # clue. Failing here says what is actually wrong.
       - name: Find the latest release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="$(gh release view --repo '${{ github.repository }}' --json tagName -q .tagName)"
-          echo "Latest release: ${tag}"
+          tag="$(gh release list --repo "${REPO}" --json tagName \
+                   --exclude-pre-releases --exclude-drafts -q '.[0].tagName')"
+          if [[ -z "${tag}" ]]; then
+            echo "::error::No published release to test against."
+            exit 1
+          fi
+
+          count="$(gh release view "${tag}" --repo "${REPO}" --json assets \
+                     -q '[.assets[].name | select(startswith("todo-curator-"))] | length')"
+          if [[ "${count}" -eq 0 ]]; then
+            echo "::error::Release ${tag} has no todo-curator binaries attached; cli-release.yml should publish them with the release."
+            exit 1
+          fi
+
+          echo "Testing against ${tag} (${count} binaries)"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
       - uses: ./
@@ -93,7 +113,7 @@ jobs:
             features: test-integration-gitlab
           - name: combined
             features: test-integration-github,test-integration-gitlab
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.1.1
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.3.0
     with:
       cache-key: api-integration
       test-command: >-

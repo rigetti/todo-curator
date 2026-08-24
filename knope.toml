@@ -5,15 +5,21 @@ versioned_files = [
 ]
 changelog = "CHANGELOG.md"
 
-# Without this, the `Release` step only creates a Git tag; declaring the forge
-# makes it publish a GitHub release with the changelog entry as its notes.
-# `cli-release.yml` then attaches the built binaries to that release.
+# Assets are attached by the `publish-release` workflow below. Declaring them
+# makes knope create the release as a draft, upload each asset, and publish
+# only then — so the release is never visible without the binaries that make it
+# installable.
+assets = "release/*"
+
+# Required for the Release step to publish to GitHub rather than only tagging.
 [github]
 owner = "rigetti"
 repo = "todo-curator"
 
+# Splitting the release in two is what lets those binaries exist by then: this
+# half bumps the version and pushes, which triggers the cross-platform build.
 [[workflows]]
-name = "release"
+name = "draft-release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
@@ -22,16 +28,17 @@ type = "PrepareRelease"
 type = "Command"
 command = 'git commit -m "chore: prepare release $version"'
 
-# The commit must reach the remote before Release runs: with a forge
-# configured, Release creates the GitHub release through the API, and GitHub
-# rejects a release whose target commit it has never seen. The push is also
-# what triggers cli-release.yml to build the binaries.
+# Pushing the commit is what triggers cli-release.yml to build the binaries.
 [[workflows.steps]]
 type = "Command"
 command = "git push"
 
-# Creates the tag as part of publishing the release, so there are no local tags
-# left to push afterwards.
+# Run by cli-release.yml once the binaries are built and downloaded into
+# ./release. Release creates the tag and the GitHub release, so nothing here
+# pushes tags.
+[[workflows]]
+name = "publish-release"
+
 [[workflows.steps]]
 type = "Release"
 

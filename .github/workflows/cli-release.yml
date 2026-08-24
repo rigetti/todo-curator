@@ -1,60 +1,22 @@
 name: CLI release
 
-# Builds the todo-curator binary for each supported platform and attaches the
-# results to the corresponding GitHub release.
+# The second half of a release: builds the binaries and runs knope's Release
+# step over them. knope.toml's `draft-release` workflow, run on merge to main,
+# only bumps and pushes — that push is what triggers this.
+#
+# Splitting it that way is what keeps a release from ever being visible without
+# the binaries that make it installable; see rust-cli-release.yml.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
-    if: "startsWith(github.event.head_commit.message, 'chore: prepare release') || github.event_name == 'workflow_dispatch'"
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.1.1
+  release:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-release.yml@v0.3.0
     with:
       bin: todo-curator
-
-  publish:
-    needs: build
-    # Only a release-preparation commit has a tag to attach binaries to.
-    if: "startsWith(github.event.head_commit.message, 'chore: prepare release')"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-      - name: Install knope
-        uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
-        with:
-          # Test before updating, breaking changes likely:
-          # https://github.com/knope-dev/action#install-latest-version
-          version: 0.23.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: release
-          merge-multiple: true
-      - name: Attach binaries to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version="$(knope get-version)"
-          # knope tags releases as vX.Y.Z; fall back to a bare version tag.
-          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
-            tag="v${version}"
-          else
-            tag="${version}"
-          fi
-          ls -l release
-          # knope normally publishes the release itself; create it here if that
-          # did not happen, so the binaries always have somewhere to land.
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            echo "No release for ${tag} yet; creating one."
-            gh release create "$tag" \
-              --title "todo-curator ${version}" \
-              --notes-file CHANGELOG.md \
-              --target "${GITHUB_SHA}"
-          fi
-          gh release upload "$tag" release/* --clobber
+    secrets:
+      # A PAT rather than GITHUB_TOKEN, so publishing the release can trigger
+      # any workflow that watches for it.
+      token: ${{ secrets.RELEASE_TOKEN }}

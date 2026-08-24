@@ -1,8 +1,8 @@
 name: Prepare prerelease
 
 # Cuts a release candidate from the branch this is dispatched on, so it can be
-# installed and tested before merging. Dispatching on main fails: merging there
-# releases automatically.
+# installed and tested before merging: bump, build, publish. Dispatching on
+# main fails, since merging there releases automatically.
 on:
   workflow_dispatch:
     inputs:
@@ -12,11 +12,12 @@ on:
         default: ""
 
 jobs:
-  prepare-prerelease:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-prerelease.yml@v0.1.1
+  prerelease:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-prerelease.yml@v0.3.0
     with:
+      bin: todo-curator
       prerelease-label: ${{ inputs.prerelease-label }}
     secrets:
       # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
-      # not trigger cli-release.yml.
+      # not trigger anything downstream.
       token: ${{ secrets.RELEASE_TOKEN }}

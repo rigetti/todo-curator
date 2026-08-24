@@ -13,7 +13,11 @@ on:
 
 jobs:
   prepare-release:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-release.yml@v0.1.1
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-release.yml@v0.3.0
+    with:
+      # The Release step runs later, from cli-release.yml, once the binaries
+      # it attaches exist.
+      knope-workflow: draft-release
     secrets:
       # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
       # not trigger cli-release.yml.
