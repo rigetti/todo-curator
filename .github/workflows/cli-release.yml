@@ -61,6 +61,19 @@ jobs:
           echo "--- release notes ---"
           cat "${RUNNER_TEMP}/notes.md"
 
+          # A semver prerelease carries a hyphenated suffix: 0.1.15-rc.0. Mark
+          # it as such, or GitHub serves it as "latest" and every consumer
+          # asking for the newest release gets a release candidate.
+          # Expanded below as ${flags[@]+"${flags[@]}"}: under `set -u`, a bare
+          # "${flags[@]}" on an empty array is an unbound variable in bash 3.2.
+          # This job runs on bash 5, where it is fine, but the portable form
+          # costs nothing.
+          flags=()
+          case "${version}" in
+            *-*) echo "Prerelease: ${version}"; flags+=(--prerelease) ;;
+            *)   echo "Full release: ${version}" ;;
+          esac
+
           # Create the release and its assets in one call, so it is never
           # visible in an unusable, assetless state. On a re-run the release
           # already exists, so upload into it instead.
@@ -71,5 +84,6 @@ jobs:
             gh release create "${tag}" release/* \
               --title "todo-curator ${version}" \
               --notes-file "${RUNNER_TEMP}/notes.md" \
-              --target "${GITHUB_SHA}"
+              --target "${GITHUB_SHA}" \
+              ${flags[@]+"${flags[@]}"}
           fi
