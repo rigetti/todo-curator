@@ -1,3 +1,15 @@
+## 0.1.15-rc.0 (2026-08-24)
+
+### Features
+
+- split the release into draft and publish halves
+
+### Fixes
+
+- self-test against the newest release that has binaries
+- publish a release only once its binaries exist
+- mark prereleases as prereleases
+
 ## 0.1.14 (2026-08-23)
 
 ### Fixes
