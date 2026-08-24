@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.3.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.4.0
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
@@ -113,7 +113,7 @@ jobs:
             features: test-integration-gitlab
           - name: combined
             features: test-integration-github,test-integration-gitlab
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.3.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.4.0
     with:
       cache-key: api-integration
       test-command: >-
