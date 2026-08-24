@@ -1,7 +1,12 @@
 name: CLI release
 
-# Builds the todo-curator binary for each supported platform and attaches the
-# results to the corresponding GitHub release.
+# Builds the todo-curator binary for each supported platform, then publishes
+# the GitHub release with those binaries attached.
+#
+# knope deliberately does not publish the release itself: it only tags. A
+# release that exists without its assets cannot be installed, and ubi reports
+# it as "could not find a release asset after filtering for valid extensions".
+# Publishing here means the release and its binaries appear together.
 on:
   push:
     branches: [main]
@@ -35,7 +40,7 @@ jobs:
         with:
           path: release
           merge-multiple: true
-      - name: Attach binaries to the release
+      - name: Publish the release with its binaries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -48,13 +53,23 @@ jobs:
             tag="${version}"
           fi
           ls -l release
-          # knope normally publishes the release itself; create it here if that
-          # did not happen, so the binaries always have somewhere to land.
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            echo "No release for ${tag} yet; creating one."
-            gh release create "$tag" \
+
+          # Just this version's entry, not the whole changelog: everything from
+          # the first `## ` heading up to the next one.
+          awk '/^## /{ if (seen) exit; seen = 1; next } seen' CHANGELOG.md \
+            > "${RUNNER_TEMP}/notes.md"
+          echo "--- release notes ---"
+          cat "${RUNNER_TEMP}/notes.md"
+
+          # Create the release and its assets in one call, so it is never
+          # visible in an unusable, assetless state. On a re-run the release
+          # already exists, so upload into it instead.
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; uploading into it."
+            gh release upload "${tag}" release/* --clobber
+          else
+            gh release create "${tag}" release/* \
               --title "todo-curator ${version}" \
-              --notes-file CHANGELOG.md \
+              --notes-file "${RUNNER_TEMP}/notes.md" \
               --target "${GITHUB_SHA}"
           fi
-          gh release upload "$tag" release/* --clobber

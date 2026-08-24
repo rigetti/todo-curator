@@ -5,13 +5,6 @@ versioned_files = [
 ]
 changelog = "CHANGELOG.md"
 
-# Without this, the `Release` step only creates a Git tag; declaring the forge
-# makes it publish a GitHub release with the changelog entry as its notes.
-# `cli-release.yml` then attaches the built binaries to that release.
-[github]
-owner = "rigetti"
-repo = "todo-curator"
-
 [[workflows]]
 name = "release"
 
@@ -22,18 +15,22 @@ type = "PrepareRelease"
 type = "Command"
 command = 'git commit -m "chore: prepare release $version"'
 
-# The commit must reach the remote before Release runs: with a forge
-# configured, Release creates the GitHub release through the API, and GitHub
-# rejects a release whose target commit it has never seen. The push is also
-# what triggers cli-release.yml to build the binaries.
+# Pushing the commit is what triggers cli-release.yml to build the binaries.
 [[workflows.steps]]
 type = "Command"
 command = "git push"
 
-# Creates the tag as part of publishing the release, so there are no local tags
-# left to push afterwards.
+# With no forge configured, this only creates a Git tag locally. That is
+# deliberate: cli-release.yml publishes the GitHub release once the binaries
+# exist, so a release is never visible without its assets. Publishing here
+# instead would leave every consumer of `rigetti/todo-curator@vX.Y.Z` unable to
+# install for the minutes the cross-platform build takes.
 [[workflows.steps]]
 type = "Release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --tags"
 
 [[workflows]]
 name = "get-version"
