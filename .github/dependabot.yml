@@ -6,3 +6,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      # `qcs-gha-infrastructure` is our own internal set of actions;
+      # we therefore trust it and permit updates immediately.
+      exclude:
+        - "rigetti/qcs-gha-infrastructure"
