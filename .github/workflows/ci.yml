@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.4.0
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.4.1
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
