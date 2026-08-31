@@ -6,6 +6,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      official:
+        patterns:
+          - "actions/*"
+      rigetti:
+        patterns:
+          - "rigetti/*"
     cooldown:
       # `qcs-gha-infrastructure` is our own internal set of actions;
       # we therefore trust it and permit updates immediately.
