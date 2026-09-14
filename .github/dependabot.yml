@@ -6,6 +6,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      # Run after any weekly GHA changes.
+      day: "wednesday"
     groups:
       official:
         patterns:
