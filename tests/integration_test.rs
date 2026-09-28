@@ -1265,3 +1265,219 @@ fn test_cross_project_shorthand_disambiguation() {
         refs
     );
 }
+
+/// Changelog-like files that should be skipped by default, relative to the scan root.
+/// Case variants live in separate directories so the fixture also works on
+/// case-insensitive filesystems (macOS).
+const CHANGELOG_FIXTURES: &[&str] = &[
+    "CHANGELOG.md",
+    "a/CHANGELOG",
+    "b/changelog.md",
+    "c/ChangeLog",
+    "docs/CHANGES.rst",
+    "crates/foo/CHANGELOG.md",
+    "HISTORY.md",
+    "NEWS",
+    "d/NEWS.txt",
+    "CHANGES.markdown",
+    "CHANGELOG.adoc",
+];
+
+/// Files whose names merely resemble changelogs; these must still be checked.
+const NON_CHANGELOG_FIXTURES: &[&str] = &[
+    "src/changelog.rs",
+    "changelog_parser.py",
+    "docs/changelog-guide.md",
+    "CHANGELOG.d/notes.md",
+    "MY_CHANGELOG.md",
+];
+
+/// Create a fresh directory containing every changelog and non-changelog fixture,
+/// each with one invalid TODO-like line.
+fn write_changelog_fixtures(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    for rel in CHANGELOG_FIXTURES.iter().chain(NON_CHANGELOG_FIXTURES) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "- reword comment to avoid TODO-lint false positive\n",
+        )
+        .unwrap();
+    }
+    root
+}
+
+/// Violation file paths, relative to `root`, with `/` separators, sorted.
+fn violation_paths(
+    root: &std::path::Path,
+    violations: &[todo_curator::todo::LintViolation],
+) -> Vec<String> {
+    let mut paths: Vec<String> = violations
+        .iter()
+        .map(|v| {
+            let p = std::path::Path::new(&v.file_path);
+            let p = p.strip_prefix(root).unwrap_or(p);
+            p.components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn sorted(items: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = items.iter().map(|s| (*s).to_string()).collect();
+    v.sort();
+    v
+}
+
+/// Changelogs are generated from commit messages, so TODO-shaped words in them are
+/// not actionable; they are skipped by default, in any directory, case-insensitively.
+#[test_log::test]
+fn test_changelogs_excluded_by_default() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_default");
+
+    let extraction = extract_todos(&root, "").unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        sorted(NON_CHANGELOG_FIXTURES),
+        "Only non-changelog files should be linted. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+/// A user-supplied exclude regex adds to the default changelog exclusion rather
+/// than replacing it (the failure mode in qcs-infrastructure!92, where a job-level
+/// override dropped the template's `CHANGELOG\.md` alternative).
+#[test_log::test]
+fn test_changelogs_excluded_with_custom_exclude_regex() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_custom_regex");
+
+    let extraction = extract_todos(&root, r"todo\.yaml|changelog_parser\.py$").unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    let expected: Vec<&str> = NON_CHANGELOG_FIXTURES
+        .iter()
+        .copied()
+        .filter(|p| *p != "changelog_parser.py")
+        .collect();
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        sorted(&expected),
+        "Custom regex should apply in addition to the changelog default. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+fn run_check_invalid(root: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> String {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.arg("check-invalid")
+        .args(args)
+        .current_dir(root)
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_REGEX")
+        .env_remove("TODO_CURATOR_INCLUDE_CHANGELOGS")
+        .env_remove("TODO_CURATOR_PATH")
+        .env_remove("RUST_LOG");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("Failed to execute todo-curator");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("Invalid TODO-like comments:"),
+        "Expected invalid TODO output. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+    );
+    stdout
+}
+
+/// `--include-changelogs` restores checking of changelog files.
+#[test_log::test]
+fn test_cli_include_changelogs_flag() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_cli_flag");
+    let stdout = run_check_invalid(&root, &["--include-changelogs"], &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        stdout.contains("CHANGELOG.md") && stdout.contains("CHANGES.rst"),
+        "Changelogs should be linted with --include-changelogs. Got:\n{stdout}"
+    );
+}
+
+/// `TODO_CURATOR_INCLUDE_CHANGELOGS=true` is equivalent to `--include-changelogs`.
+#[test_log::test]
+fn test_cli_include_changelogs_env_var() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_cli_env");
+    for value in ["true", "1", "yes"] {
+        let stdout = run_check_invalid(&root, &[], &[("TODO_CURATOR_INCLUDE_CHANGELOGS", value)]);
+        assert!(
+            stdout.contains("CHANGELOG.md") && stdout.contains("CHANGES.rst"),
+            "Changelogs should be linted with TODO_CURATOR_INCLUDE_CHANGELOGS={value}. Got:\n{stdout}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Falsey or empty `TODO_CURATOR_INCLUDE_CHANGELOGS` keeps the default. Empty matters
+/// because CI systems routinely pass unset variables through as empty strings.
+#[test_log::test]
+fn test_cli_include_changelogs_env_var_falsey_or_empty() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_cli_env_falsey");
+    for value in ["", "false", "0"] {
+        let stdout = run_check_invalid(&root, &[], &[("TODO_CURATOR_INCLUDE_CHANGELOGS", value)]);
+        assert!(
+            !stdout.contains("CHANGES.rst") && stdout.contains("changelog_parser.py"),
+            "Changelogs should be skipped with TODO_CURATOR_INCLUDE_CHANGELOGS={value:?}. Got:\n{stdout}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Without the opt-out, the CLI skips changelogs by default.
+#[test_log::test]
+fn test_cli_excludes_changelogs_by_default() {
+    let root = write_changelog_fixtures("todo_curator_changelogs_cli_default");
+    let stdout = run_check_invalid(&root, &[], &[]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        !stdout.contains("CHANGES.rst") && !stdout.contains("HISTORY.md"),
+        "Changelogs should not be linted by default. Got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("changelog_parser.py"),
+        "Non-changelog files should still be linted. Got:\n{stdout}"
+    );
+}
+
+/// The exclude regex is matched against the path relative to `--path`, *without* a
+/// leading `./`, even though violations are reported as `./<file>` when `--path` is
+/// the default `.`. So anchored patterns such as `^notes\.md$` work as expected.
+#[test_log::test]
+fn test_cli_exclude_regex_is_matched_without_dot_slash_prefix() {
+    let root = std::env::temp_dir().join("todo_curator_exclude_dot_slash");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for rel in ["notes.md", "sub/notes.md", "keep.rs"] {
+        std::fs::write(root.join(rel), "// TODO without a reference\n").unwrap();
+    }
+
+    let stdout = run_check_invalid(&root, &["--exclude-file-regex", r"^notes\.md$"], &[]);
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        stdout.contains("./keep.rs") && stdout.contains("./sub/notes.md"),
+        "Unanchored-match files should be reported with a ./ prefix. Got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("./notes.md"),
+        "^notes\\.md$ should exclude the top-level notes.md. Got:\n{stdout}"
+    );
+}

@@ -5,12 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use todo_curator::{
-    check_closed_from_extraction, check_closed_references, check_invalid,
-    check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
-    extract_todos, CheckOutput,
+    check_closed_from_extraction, check_invalid_from_extraction, checker::ProjectDetection,
+    checker::StatusChecker, todo::ExtractionResult, todo::TodoExtractor, CheckOutput,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -53,9 +52,49 @@ struct Args {
     #[arg(
         long,
         env = "TODO_CURATOR_EXCLUDE_FILE_REGEX",
-        help = "Regex pattern for files to exclude from linting"
+        help = "Regex pattern for files to exclude from linting",
+        long_help = "Regex pattern for files to exclude from linting. \
+            It is matched (unanchored) against each file's path relative to --path, \
+            without a leading `./`, e.g. `^CHANGELOG\\.md$` or `docs/`. \
+            Changelog files are excluded separately; see --include-changelogs."
     )]
     exclude_file_regex: Option<String>,
+
+    #[arg(
+        long,
+        env = "TODO_CURATOR_INCLUDE_CHANGELOGS",
+        value_parser = parse_boolish_env,
+        help = "Also check changelog files, which are skipped by default",
+        long_help = "Also check changelog files, which are skipped by default \
+            whether or not --exclude-file-regex is set. \
+            A changelog is any file, in any directory, named CHANGELOG, CHANGES, HISTORY, or NEWS \
+            (case-insensitive), optionally with a .md, .markdown, .rst, .txt, or .adoc extension. \
+            The environment variable accepts true/false, 1/0, yes/no, or on/off; \
+            empty means unset (false)."
+    )]
+    include_changelogs: bool,
+}
+
+/// Parse a boolean flag value (from the command line or an environment variable),
+/// treating an empty value as `false`: CI systems routinely pass unset variables
+/// through as empty strings.
+fn parse_boolish_env(value: &str) -> std::result::Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "false" | "0" | "no" | "n" | "off" => Ok(false),
+        "true" | "1" | "yes" | "y" | "on" => Ok(true),
+        other => Err(format!("expected a boolean (true/false), got '{other}'")),
+    }
+}
+
+/// Extract TODOs from `path`, honoring the exclude regex and changelog setting.
+fn extract(
+    path: &Path,
+    exclude_file_regex: Option<&str>,
+    include_changelogs: bool,
+) -> Result<ExtractionResult> {
+    TodoExtractor::with_exclude_file_regex(exclude_file_regex.unwrap_or(""))?
+        .include_changelogs(include_changelogs)
+        .extract_from_directory(path)
 }
 
 #[derive(Subcommand)]
@@ -141,14 +180,14 @@ async fn main() -> Result<()> {
                 format,
                 output: output_path,
                 exclude_file_regex,
+                include_changelogs,
             } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-closed");
+            let extraction = extract(&path, exclude_file_regex.as_deref(), include_changelogs)?;
             let result =
-                check_closed_references(path, &project_detection, checker, exclude_file_regex)
-                    .await?;
+                check_closed_from_extraction(&extraction, &project_detection, checker).await?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckInvalid { args } => {
@@ -157,9 +196,10 @@ async fn main() -> Result<()> {
                 format,
                 output: output_path,
                 exclude_file_regex,
+                include_changelogs,
             } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
-            let result = check_invalid(&path, &project_detection, exclude_file_regex)?;
+            let extraction = extract(&path, exclude_file_regex.as_deref(), include_changelogs)?;
+            let result = check_invalid_from_extraction(&extraction, &project_detection)?;
             output_and_exit(&result, format, output_path)?;
         }
         Commands::CheckAll { args } => {
@@ -168,12 +208,12 @@ async fn main() -> Result<()> {
                 format,
                 output: output_path,
                 exclude_file_regex,
+                include_changelogs,
             } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-all");
-            let extraction = extract_todos(&path, exclude_file_regex)?;
+            let extraction = extract(&path, exclude_file_regex.as_deref(), include_changelogs)?;
             let mut closed_result =
                 check_closed_from_extraction(&extraction, &project_detection, checker).await?;
             let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
@@ -211,12 +251,12 @@ async fn main() -> Result<()> {
                 format,
                 output: output_path,
                 exclude_file_regex,
+                include_changelogs,
             } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
             let checker = checker
                 .as_ref()
                 .expect("checker should be initialized for check-mr-todos");
-            let extraction = extract_todos(&path, exclude_file_regex)?;
+            let extraction = extract(&path, exclude_file_regex.as_deref(), include_changelogs)?;
             check_mr_todos(
                 &extraction.references,
                 format,

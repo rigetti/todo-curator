@@ -44,6 +44,32 @@ In each pattern, `#ref` must be a valid reference (see supported formats below).
   - This works for GitLab work-items, merge-requests, and epics, and for GitHub issues and pull-requests.
 - Shortened URL: `github.com/owner/repo#7`
 
+## Excluding files
+
+Files ignored by `.gitignore` (and other standard `ignore` filters) are never scanned.
+
+### Changelogs are skipped by default
+
+Changelogs are usually generated from commit messages or changesets
+(knope, release-please, git-cliff, towncrier, ...),
+so a commit subject that merely mentions a TODO-like word would otherwise fail the check.
+Any file, in any directory, whose *name* is `CHANGELOG`, `CHANGES`, `HISTORY`, or `NEWS`
+(case-insensitive), bare or with a `.md`, `.markdown`, `.rst`, `.txt`, or `.adoc` extension,
+is skipped.
+Directories with those names (e.g. `changelog.d/`) and names that merely contain them
+(e.g. `changelog.rs`, `MY_CHANGELOG.md`) are still scanned.
+
+This is independent of `--exclude-file-regex`: setting a custom regex does not bring changelogs back.
+To check changelogs anyway, pass `--include-changelogs`
+or set `TODO_CURATOR_INCLUDE_CHANGELOGS=true`.
+
+### `--exclude-file-regex`
+
+`--exclude-file-regex` (or `TODO_CURATOR_EXCLUDE_FILE_REGEX`) takes a single regex,
+matched (unanchored) against each file's path relative to `--path`, *without* a leading `./`.
+With the default `--path .`, violations are reported as `./dir/file`,
+but `^dir/file$` is what matches.
+
 ## URL-shortening warnings
 
 The "short" versions of references are generally preferred.
@@ -80,7 +106,9 @@ the install off GitHub's unauthenticated API rate limit, which can be as low as
 60 requests per hour per IP.
 
 If a repository's own tests or docs contain TODO-shaped text, set
-`exclude-file-regex` or the checks will flag them.
+`exclude-file-regex` or the checks will flag them. Changelogs are skipped
+without it (see [Excluding files](#excluding-files)); to check them, add
+`--include-changelogs` to `args`.
 
 ### Shared QCS workflows
 

@@ -36,7 +36,10 @@ inputs:
     description: >-
       Regex of files to skip. Note that this is a single regex, not a list.
       Repositories whose own test fixtures contain TODO-shaped strings need
-      this, or the checks will flag their fixtures.
+      this, or the checks will flag their fixtures. Matched against paths
+      relative to `path`, without a leading `./`. Changelogs (CHANGELOG.md
+      and similar) are skipped regardless; add `--include-changelogs` to
+      `args` to check them.
     required: false
     default: ""
   github-token:
