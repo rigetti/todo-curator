@@ -53,7 +53,7 @@ it prints `TODO references that can be shortened` with a suggested shorter form.
 
 ## Logging
 
-Logs go to stderr; set `RUST_LOG` (e.g. `RUST_LOG=info`) to see more than errors.
+Logs go to stderr at INFO level by default; set `RUST_LOG` (e.g. `RUST_LOG=debug`) to change it.
 
 ## Integration with CI/CD
 

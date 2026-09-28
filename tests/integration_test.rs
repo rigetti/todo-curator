@@ -1319,18 +1319,18 @@ fn test_logs_go_to_stderr_not_stdout() {
     );
 }
 
-/// Test that with RUST_LOG unset, only ERROR-level logs are emitted.
+/// Test that with RUST_LOG unset, logs default to INFO level.
 #[test_log::test]
-fn test_logs_default_to_error_level() {
+fn test_logs_default_to_info_level() {
     let stderr = run_json_check_outside_repo("todo_curator_logs_default_level", None);
     assert!(
-        stderr.contains("No project detected!"),
-        "Expected ERROR log on stderr with RUST_LOG unset. Got:\n{}",
+        stderr.contains("not in a valid git repository"),
+        "Expected WARN log on stderr with RUST_LOG unset. Got:\n{}",
         stderr
     );
     assert!(
-        !stderr.contains("not in a valid git repository"),
-        "Expected no WARN log with RUST_LOG unset. Got:\n{}",
+        !stderr.contains("Extracting TODO references"),
+        "Expected no DEBUG log with RUST_LOG unset. Got:\n{}",
         stderr
     );
 }
