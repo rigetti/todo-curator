@@ -1266,38 +1266,40 @@ fn test_cross_project_shorthand_disambiguation() {
     );
 }
 
-/// Changelog-like files that should be skipped by default, relative to the scan root.
-/// Case variants live in separate directories so the fixture also works on
-/// case-insensitive filesystems (macOS).
-const CHANGELOG_FIXTURES: &[&str] = &[
+/// Files (relative to the scan root) matched by the default exclusion regex.
+const DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
+    "Cargo.lock",
+    "sub/Cargo.lock",
+    "relint-foo.yaml",
+    "relint.yml",
+    "mermaid.min.js",
     "CHANGELOG.md",
-    "a/CHANGELOG",
-    "b/changelog.md",
-    "c/ChangeLog",
-    "docs/CHANGES.rst",
-    "crates/foo/CHANGELOG.md",
-    "HISTORY.md",
-    "NEWS",
-    "d/NEWS.txt",
-    "CHANGES.markdown",
-    "CHANGELOG.adoc",
 ];
 
-/// Files whose names merely resemble changelogs; these must still be checked.
-const NON_CHANGELOG_FIXTURES: &[&str] = &[
-    "src/changelog.rs",
-    "changelog_parser.py",
-    "docs/changelog-guide.md",
-    "CHANGELOG.d/notes.md",
-    "MY_CHANGELOG.md",
+/// Files that the default exclusion regex must not match. The non-`.lock`
+/// alternatives are anchored to the scan root, so nested copies are still checked.
+const NOT_DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
+    "keep.rs",
+    "todo.yaml",
+    "sub/CHANGELOG.md",
+    "docs/relint-foo.yaml",
+    "sub/mermaid.min.js",
 ];
 
-/// Create a fresh directory containing every changelog and non-changelog fixture,
+fn all_exclusion_fixtures() -> Vec<&'static str> {
+    DEFAULT_EXCLUDED_FIXTURES
+        .iter()
+        .chain(NOT_DEFAULT_EXCLUDED_FIXTURES)
+        .copied()
+        .collect()
+}
+
+/// Create a fresh directory containing every exclusion fixture,
 /// each with one invalid TODO-like line.
-fn write_changelog_fixtures(name: &str) -> PathBuf {
+fn write_exclusion_fixtures(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(name);
     let _ = std::fs::remove_dir_all(&root);
-    for rel in CHANGELOG_FIXTURES.iter().chain(NON_CHANGELOG_FIXTURES) {
+    for rel in all_exclusion_fixtures() {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1338,44 +1340,193 @@ fn sorted(items: &[&str]) -> Vec<String> {
     v
 }
 
-/// Changelogs are generated from commit messages, so TODO-shaped words in them are
-/// not actionable; they are skipped by default, in any directory, case-insensitively.
+fn without(items: &[&str], excluded: &[&str]) -> Vec<String> {
+    let kept: Vec<&str> = items
+        .iter()
+        .copied()
+        .filter(|p| !excluded.contains(p))
+        .collect();
+    sorted(&kept)
+}
+
+/// Lock files, relint configs, mermaid bundles, and the root changelog are skipped
+/// by default, without any `--exclude-file-regex`.
 #[test_log::test]
-fn test_changelogs_excluded_by_default() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_default");
+fn test_default_exclusions_apply_without_custom_regex() {
+    let root = write_exclusion_fixtures("todo_curator_default_exclusions");
 
     let extraction = extract_todos(&root, "").unwrap();
     let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(
         violation_paths(&root, &extraction.lint_violations),
-        sorted(NON_CHANGELOG_FIXTURES),
-        "Only non-changelog files should be linted. Got: {:#?}",
+        sorted(NOT_DEFAULT_EXCLUDED_FIXTURES),
+        "Default-excluded files should not be linted. Got: {:#?}",
         extraction.lint_violations
     );
 }
 
-/// A user-supplied exclude regex adds to the default changelog exclusion rather
-/// than replacing it (the failure mode in qcs-infrastructure!92, where a job-level
+/// A user-supplied exclude regex adds to the default exclusions rather than
+/// replacing them (the failure mode in qcs-infrastructure!92, where a job-level
 /// override dropped the template's `CHANGELOG\.md` alternative).
 #[test_log::test]
-fn test_changelogs_excluded_with_custom_exclude_regex() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_custom_regex");
+fn test_custom_exclude_regex_is_additive_to_defaults() {
+    let root = write_exclusion_fixtures("todo_curator_additive_exclusions");
 
-    let extraction = extract_todos(&root, r"todo\.yaml|changelog_parser\.py$").unwrap();
+    let extraction = extract_todos(&root, r"todo\.yaml").unwrap();
     let _ = std::fs::remove_dir_all(&root);
 
-    let expected: Vec<&str> = NON_CHANGELOG_FIXTURES
-        .iter()
-        .copied()
-        .filter(|p| *p != "changelog_parser.py")
-        .collect();
     assert_eq!(
         violation_paths(&root, &extraction.lint_violations),
-        sorted(&expected),
-        "Custom regex should apply in addition to the changelog default. Got: {:#?}",
+        without(NOT_DEFAULT_EXCLUDED_FIXTURES, &["todo.yaml"]),
+        "Custom regex should apply in addition to the defaults. Got: {:#?}",
         extraction.lint_violations
     );
+}
+
+/// `TodoExtractor::exclude_file_defaults(false)` disables only the default exclusions.
+#[test_log::test]
+fn test_exclude_file_defaults_disabled() {
+    use todo_curator::todo::TodoExtractor;
+    let root = write_exclusion_fixtures("todo_curator_defaults_disabled");
+
+    let extraction = TodoExtractor::with_exclude_file_regex(r"todo\.yaml")
+        .unwrap()
+        .exclude_file_defaults(false)
+        .extract_from_directory(&root)
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        without(&all_exclusion_fixtures(), &["todo.yaml"]),
+        "Only the custom regex should apply. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+/// Run `check-invalid --format json` in `root` and return the violation paths,
+/// without the `./` prefix, sorted.
+fn cli_violation_paths(
+    root: &std::path::Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Vec<String> {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.args(["check-invalid", "--format", "json"])
+        .args(args)
+        .current_dir(root)
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_REGEX")
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS")
+        .env_remove("TODO_CURATOR_FORMAT")
+        .env_remove("TODO_CURATOR_PATH")
+        .env_remove("RUST_LOG");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("Failed to execute todo-curator");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Log lines (tracing writes to stdout) precede the JSON document.
+    let json_start = if stdout.starts_with('{') {
+        0
+    } else {
+        stdout.find("\n{").map_or(0, |i| i + 1)
+    };
+    let json: serde_json::Value = serde_json::from_str(&stdout[json_start..]).unwrap_or_else(|e| {
+        panic!("Expected JSON output ({e}). Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+    });
+    let mut paths: Vec<String> = json["lint_violations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("Expected lint_violations array. Got:\n{stdout}"))
+        .iter()
+        .map(|v| {
+            let p = v["file_path"]
+                .as_str()
+                .expect("file_path should be a string");
+            p.strip_prefix("./").unwrap_or(p).to_string()
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// The CLI applies the default exclusions, additively with `--exclude-file-regex`.
+#[test_log::test]
+fn test_cli_default_exclusions_are_additive() {
+    let root = write_exclusion_fixtures("todo_curator_cli_default_exclusions");
+    let default_only = cli_violation_paths(&root, &[], &[]);
+    let with_custom = cli_violation_paths(&root, &["--exclude-file-regex", r"todo\.yaml"], &[]);
+    let with_custom_env = cli_violation_paths(
+        &root,
+        &[],
+        &[("TODO_CURATOR_EXCLUDE_FILE_REGEX", r"todo\.yaml")],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(default_only, sorted(NOT_DEFAULT_EXCLUDED_FIXTURES));
+    let expected = without(NOT_DEFAULT_EXCLUDED_FIXTURES, &["todo.yaml"]);
+    assert_eq!(with_custom, expected);
+    assert_eq!(with_custom_env, expected);
+}
+
+/// `--exclude-file-defaults=false` disables the default exclusions; the user regex
+/// still applies.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_false_flag() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_off_flag");
+    let paths = cli_violation_paths(
+        &root,
+        &[
+            "--exclude-file-defaults=false",
+            "--exclude-file-regex",
+            r"todo\.yaml",
+        ],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(paths, without(&all_exclusion_fixtures(), &["todo.yaml"]));
+}
+
+/// Falsey `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS` disables the default exclusions;
+/// the user regex still applies.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_env_falsey() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_off_env");
+    let expected = without(&all_exclusion_fixtures(), &["todo.yaml"]);
+    for value in ["false", "0", "no", "off", "FALSE"] {
+        let paths = cli_violation_paths(
+            &root,
+            &[],
+            &[
+                ("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS", value),
+                ("TODO_CURATOR_EXCLUDE_FILE_REGEX", r"todo\.yaml"),
+            ],
+        );
+        assert_eq!(
+            paths, expected,
+            "TODO_CURATOR_EXCLUDE_FILE_DEFAULTS={value:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Truthy or empty `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS` keeps the defaults. Empty
+/// matters because CI systems routinely pass unset variables through as empty strings.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_env_truthy_or_empty() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_on_env");
+    let expected = sorted(NOT_DEFAULT_EXCLUDED_FIXTURES);
+    for value in ["", "true", "1", "yes", "on"] {
+        let paths =
+            cli_violation_paths(&root, &[], &[("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS", value)]);
+        assert_eq!(
+            paths, expected,
+            "TODO_CURATOR_EXCLUDE_FILE_DEFAULTS={value:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 fn run_check_invalid(root: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> String {
@@ -1384,7 +1535,8 @@ fn run_check_invalid(root: &std::path::Path, args: &[&str], envs: &[(&str, &str)
         .args(args)
         .current_dir(root)
         .env_remove("TODO_CURATOR_EXCLUDE_FILE_REGEX")
-        .env_remove("TODO_CURATOR_INCLUDE_CHANGELOGS")
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS")
+        .env_remove("TODO_CURATOR_FORMAT")
         .env_remove("TODO_CURATOR_PATH")
         .env_remove("RUST_LOG");
     for (k, v) in envs {
@@ -1398,63 +1550,6 @@ fn run_check_invalid(root: &std::path::Path, args: &[&str], envs: &[(&str, &str)
         "Expected invalid TODO output. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
     );
     stdout
-}
-
-/// `--include-changelogs` restores checking of changelog files.
-#[test_log::test]
-fn test_cli_include_changelogs_flag() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_cli_flag");
-    let stdout = run_check_invalid(&root, &["--include-changelogs"], &[]);
-    let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        stdout.contains("CHANGELOG.md") && stdout.contains("CHANGES.rst"),
-        "Changelogs should be linted with --include-changelogs. Got:\n{stdout}"
-    );
-}
-
-/// `TODO_CURATOR_INCLUDE_CHANGELOGS=true` is equivalent to `--include-changelogs`.
-#[test_log::test]
-fn test_cli_include_changelogs_env_var() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_cli_env");
-    for value in ["true", "1", "yes"] {
-        let stdout = run_check_invalid(&root, &[], &[("TODO_CURATOR_INCLUDE_CHANGELOGS", value)]);
-        assert!(
-            stdout.contains("CHANGELOG.md") && stdout.contains("CHANGES.rst"),
-            "Changelogs should be linted with TODO_CURATOR_INCLUDE_CHANGELOGS={value}. Got:\n{stdout}"
-        );
-    }
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// Falsey or empty `TODO_CURATOR_INCLUDE_CHANGELOGS` keeps the default. Empty matters
-/// because CI systems routinely pass unset variables through as empty strings.
-#[test_log::test]
-fn test_cli_include_changelogs_env_var_falsey_or_empty() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_cli_env_falsey");
-    for value in ["", "false", "0"] {
-        let stdout = run_check_invalid(&root, &[], &[("TODO_CURATOR_INCLUDE_CHANGELOGS", value)]);
-        assert!(
-            !stdout.contains("CHANGES.rst") && stdout.contains("changelog_parser.py"),
-            "Changelogs should be skipped with TODO_CURATOR_INCLUDE_CHANGELOGS={value:?}. Got:\n{stdout}"
-        );
-    }
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// Without the opt-out, the CLI skips changelogs by default.
-#[test_log::test]
-fn test_cli_excludes_changelogs_by_default() {
-    let root = write_changelog_fixtures("todo_curator_changelogs_cli_default");
-    let stdout = run_check_invalid(&root, &[], &[]);
-    let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        !stdout.contains("CHANGES.rst") && !stdout.contains("HISTORY.md"),
-        "Changelogs should not be linted by default. Got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("changelog_parser.py"),
-        "Non-changelog files should still be linted. Got:\n{stdout}"
-    );
 }
 
 /// The exclude regex is matched against the path relative to `--path`, *without* a

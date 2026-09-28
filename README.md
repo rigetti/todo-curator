@@ -48,27 +48,23 @@ In each pattern, `#ref` must be a valid reference (see supported formats below).
 
 Files ignored by `.gitignore` (and other standard `ignore` filters) are never scanned.
 
-### Changelogs are skipped by default
-
-Changelogs are usually generated from commit messages or changesets
-(knope, release-please, git-cliff, towncrier, ...),
-so a commit subject that merely mentions a TODO-like word would otherwise fail the check.
-Any file, in any directory, whose *name* is `CHANGELOG`, `CHANGES`, `HISTORY`, or `NEWS`
-(case-insensitive), bare or with a `.md`, `.markdown`, `.rst`, `.txt`, or `.adoc` extension,
-is skipped.
-Directories with those names (e.g. `changelog.d/`) and names that merely contain them
-(e.g. `changelog.rs`, `MY_CHANGELOG.md`) are still scanned.
-
-This is independent of `--exclude-file-regex`: setting a custom regex does not bring changelogs back.
-To check changelogs anyway, pass `--include-changelogs`
-or set `TODO_CURATOR_INCLUDE_CHANGELOGS=true`.
-
-### `--exclude-file-regex`
-
-`--exclude-file-regex` (or `TODO_CURATOR_EXCLUDE_FILE_REGEX`) takes a single regex,
-matched (unanchored) against each file's path relative to `--path`, *without* a leading `./`.
+Exclusion regexes are matched (unanchored) against each file's path relative to `--path`,
+*without* a leading `./`.
 With the default `--path .`, violations are reported as `./dir/file`,
 but `^dir/file$` is what matches.
+
+A file is skipped if it matches **either** of:
+
+- The default regex (lock files anywhere; root-level relint configs, mermaid bundles, and `CHANGELOG.md`):
+
+  ```
+  \.lock$|^(relint.*\.ya?ml|mermaid.*\.js|CHANGELOG\.md)$
+  ```
+
+  Disable it with `--exclude-file-defaults=false` (or `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS=false`;
+  accepts true/false, 1/0, yes/no, on/off; empty means true).
+- `--exclude-file-regex` (or `TODO_CURATOR_EXCLUDE_FILE_REGEX`), a single regex.
+  It adds to the defaults rather than replacing them, so there is no need to repeat them.
 
 ## URL-shortening warnings
 
@@ -94,6 +90,7 @@ releases with [ubi](https://github.com/houseabsolute/ubi) and runs a check:
     args: --format json       # optional
     path: .                   # optional
     exclude-file-regex: ""    # optional; a single regex, not a list
+    exclude-file-defaults: "" # optional; "false" disables the default regex
 ```
 
 The `version` to install defaults to the ref the action was called with, so
@@ -106,9 +103,9 @@ the install off GitHub's unauthenticated API rate limit, which can be as low as
 60 requests per hour per IP.
 
 If a repository's own tests or docs contain TODO-shaped text, set
-`exclude-file-regex` or the checks will flag them. Changelogs are skipped
-without it (see [Excluding files](#excluding-files)); to check them, add
-`--include-changelogs` to `args`.
+`exclude-file-regex` or the checks will flag them. It adds to the default
+exclusions (see [Excluding files](#excluding-files)); set
+`exclude-file-defaults: false` to turn those off.
 
 ### Shared QCS workflows
 

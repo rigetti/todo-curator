@@ -10,23 +10,18 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::{checker::ProjectDetection, ReferenceWarning};
 
-/// File names (not paths) of changelogs, which are skipped unless explicitly included.
+/// Files excluded by default, in addition to any user-supplied exclude regex.
 ///
-/// Changelogs are usually generated from commit messages or changesets (knope,
-/// release-please, git-cliff, towncrier, ...), so a TODO-like word in them describes
-/// history rather than outstanding work. The match is on the file name only, in any
-/// directory, case-insensitively: `CHANGELOG`, `CHANGES`, `HISTORY`, or `NEWS`, either
-/// bare or with a `.md`, `.markdown`, `.rst`, `.txt`, or `.adoc` extension.
-static CHANGELOG_FILE_NAME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(?:CHANGELOG|CHANGES|HISTORY|NEWS)(?:\.(?:md|markdown|rst|txt|adoc))?$")
-        .expect("changelog file name pattern is a valid regex")
-});
+/// Like the user regex, it is matched against each file's path relative to the scanned
+/// directory, without a leading `./`: lock files anywhere, plus root-level relint
+/// configs, mermaid bundles, and `CHANGELOG.md` (generated, not outstanding work).
+/// Disable with [`TodoExtractor::exclude_file_defaults`].
+pub const DEFAULT_EXCLUDE_FILE_REGEX: &str =
+    r"\.lock$|^(relint.*\.ya?ml|mermaid.*\.js|CHANGELOG\.md)$";
 
-/// Whether `file_name` (a bare file name, not a path) is a conventional changelog name.
-/// See [`TodoExtractor::include_changelogs`].
-pub fn is_changelog_file_name(file_name: &str) -> bool {
-    CHANGELOG_FILE_NAME.is_match(file_name)
-}
+static DEFAULT_EXCLUDE_FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(DEFAULT_EXCLUDE_FILE_REGEX).expect("default exclude regex is valid")
+});
 
 /// Walk source files in a directory, respecting `.gitignore` and standard filters.
 /// Yields only regular files (skips directories, symlinks, errors).
@@ -231,7 +226,7 @@ pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
     exclude_file_regex: Option<Regex>,
-    include_changelogs: bool,
+    exclude_file_defaults: bool,
 }
 
 impl Default for TodoExtractor {
@@ -561,31 +556,25 @@ impl TodoExtractor {
             todo_ref_pattern,
             patterns,
             exclude_file_regex,
-            include_changelogs: false,
+            exclude_file_defaults: true,
         })
     }
 
-    /// Whether to scan changelog files (see [`is_changelog_file_name`]).
+    /// Whether to skip files matching [`DEFAULT_EXCLUDE_FILE_REGEX`] (default `true`).
     ///
-    /// Defaults to `false`: changelogs are skipped regardless of the exclude regex,
-    /// so a custom exclude regex does not need to repeat them.
+    /// The user exclude regex, if any, applies either way.
     #[must_use]
-    pub const fn include_changelogs(mut self, include: bool) -> Self {
-        self.include_changelogs = include;
+    pub const fn exclude_file_defaults(mut self, enabled: bool) -> Self {
+        self.exclude_file_defaults = enabled;
         self
     }
 
-    fn is_excluded(&self, path: &Path, relative_path: &str) -> bool {
-        if !self.include_changelogs
-            && path
-                .file_name()
-                .is_some_and(|name| is_changelog_file_name(&name.to_string_lossy()))
-        {
-            return true;
-        }
-        self.exclude_file_regex
-            .as_ref()
-            .is_some_and(|pattern| pattern.is_match(relative_path))
+    fn is_excluded(&self, relative_path: &str) -> bool {
+        (self.exclude_file_defaults && DEFAULT_EXCLUDE_FILE_PATTERN.is_match(relative_path))
+            || self
+                .exclude_file_regex
+                .as_ref()
+                .is_some_and(|pattern| pattern.is_match(relative_path))
     }
 
     fn extract_token_reference(
@@ -636,7 +625,7 @@ impl TodoExtractor {
                 .to_string_lossy()
                 .to_string();
 
-            if self.is_excluded(path, &relative_file_path_str) {
+            if self.is_excluded(&relative_file_path_str) {
                 tracing::debug!("Skipping excluded file: {}", path.display());
                 continue;
             }
