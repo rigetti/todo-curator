@@ -13,11 +13,11 @@ use crate::{checker::ProjectDetection, ReferenceWarning};
 /// Files excluded by default, in addition to any user-supplied exclude regex.
 ///
 /// Like the user regex, it is matched against each file's path relative to the scanned
-/// directory, without a leading `./`: lock files anywhere, plus root-level relint
-/// configs, mermaid bundles, and `CHANGELOG.md` (generated, not outstanding work).
+/// directory, without a leading `./`: lock files and `CHANGELOG.md` (generated, not
+/// outstanding work) anywhere, plus root-level relint configs and mermaid bundles.
 /// Disable with [`TodoExtractor::exclude_file_defaults`].
 pub const DEFAULT_EXCLUDE_FILE_REGEX: &str =
-    r"\.lock$|^(relint.*\.ya?ml|mermaid.*\.js|CHANGELOG\.md)$";
+    r"\.lock$|^(relint.*\.ya?ml|mermaid.*\.js)$|(^|/)CHANGELOG\.md$";
 
 static DEFAULT_EXCLUDE_FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(DEFAULT_EXCLUDE_FILE_REGEX).expect("default exclude regex is valid")

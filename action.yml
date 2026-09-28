@@ -44,8 +44,8 @@ inputs:
   exclude-file-defaults:
     description: >-
       Set to `false` to stop skipping files that match the built-in default
-      regex (lock files, root-level relint configs and mermaid bundles, and
-      the root CHANGELOG.md). Empty means `true`.
+      regex (lock files and CHANGELOG.md anywhere, root-level relint configs
+      and mermaid bundles). Empty means `true`.
     required: false
     default: ""
   github-token:

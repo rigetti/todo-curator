@@ -55,10 +55,10 @@ but `^dir/file$` is what matches.
 
 A file is skipped if it matches **either** of:
 
-- The default regex (lock files anywhere; root-level relint configs, mermaid bundles, and `CHANGELOG.md`):
+- The default regex (lock files and `CHANGELOG.md` anywhere; root-level relint configs and mermaid bundles):
 
   ```
-  \.lock$|^(relint.*\.ya?ml|mermaid.*\.js|CHANGELOG\.md)$
+  \.lock$|^(relint.*\.ya?ml|mermaid.*\.js)$|(^|/)CHANGELOG\.md$
   ```
 
   Disable it with `--exclude-file-defaults=false` (or `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS=false`;

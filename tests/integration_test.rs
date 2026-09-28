@@ -1274,14 +1274,17 @@ const DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
     "relint.yml",
     "mermaid.min.js",
     "CHANGELOG.md",
+    "sub/CHANGELOG.md",
+    "crates/foo/CHANGELOG.md",
 ];
 
-/// Files that the default exclusion regex must not match. The non-`.lock`
+/// Files that the default exclusion regex must not match. The relint and mermaid
 /// alternatives are anchored to the scan root, so nested copies are still checked.
 const NOT_DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
     "keep.rs",
     "todo.yaml",
-    "sub/CHANGELOG.md",
+    "MY_CHANGELOG.md",
+    "docs/MY_CHANGELOG.md",
     "docs/relint-foo.yaml",
     "sub/mermaid.min.js",
 ];
