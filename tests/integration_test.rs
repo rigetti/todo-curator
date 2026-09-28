@@ -287,7 +287,9 @@ fn test_directory_scanning() {
 #[test_log::test]
 fn test_check_invalid_skips_auth_validation() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_auth");
+    // The path shows up in logs on stderr, so it must not itself contain
+    // "auth" or "token".
+    let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_creds");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -1263,5 +1265,49 @@ fn test_cross_project_shorthand_disambiguation() {
         )),
         "github.com/owner/repo#7 should parse as GitHubIssueOrPr. Got: {:#?}",
         refs
+    );
+}
+
+/// Test that log output goes to stderr, leaving stdout as nothing but the
+/// program's output, so that `--format json` stays machine-readable.
+#[test_log::test]
+fn test_logs_go_to_stderr_not_stdout() {
+    // Outside any git repository and with no CI_PROJECT_PATH, project
+    // detection logs a warning and an error, both enabled by default.
+    let temp_dir = std::env::temp_dir().join("todo_curator_logs_to_stderr");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::write(temp_dir.join("bad.rs"), "// TODO without a reference\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
+        .arg("check-invalid")
+        .arg("-p")
+        .arg(&temp_dir)
+        .arg("--format")
+        .arg("json")
+        .env_remove("CI_PROJECT_PATH")
+        .env_remove("RUST_LOG")
+        .env("NO_COLOR", "1")
+        .current_dir(&temp_dir)
+        .output()
+        .expect("Failed to execute todo-curator");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+    assert!(
+        parsed.is_ok(),
+        "stdout should be exactly one JSON document. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.contains("No project detected!"),
+        "Expected log output on stderr. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
     );
 }

@@ -91,7 +91,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    // Logs go to stderr so stdout carries only the check output (e.g. JSON).
+    tracing_subscriber::fmt().with_writer(io::stderr).init();
     let cli = Cli::parse();
 
     if matches!(cli.command, Commands::ValidateAuth) {
