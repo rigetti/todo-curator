@@ -287,7 +287,9 @@ fn test_directory_scanning() {
 #[test_log::test]
 fn test_check_invalid_skips_auth_validation() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_auth");
+    // The path shows up in logs on stderr, so it must not itself contain
+    // "auth" or "token".
+    let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_creds");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -1263,5 +1265,83 @@ fn test_cross_project_shorthand_disambiguation() {
         )),
         "github.com/owner/repo#7 should parse as GitHubIssueOrPr. Got: {:#?}",
         refs
+    );
+}
+
+/// Run `check-invalid --format json` outside any git repository (so project
+/// detection logs a WARN and an ERROR) with the given `RUST_LOG`, and check
+/// that stdout is exactly one JSON document. Returns stderr.
+fn run_json_check_outside_repo(name: &str, rust_log: Option<&str>) -> String {
+    let temp_dir = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::write(temp_dir.join("bad.rs"), "// TODO without a reference\n").unwrap();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.arg("check-invalid")
+        .arg("-p")
+        .arg(&temp_dir)
+        .arg("--format")
+        .arg("json")
+        .env_remove("CI_PROJECT_PATH")
+        .env("NO_COLOR", "1")
+        .current_dir(&temp_dir);
+    match rust_log {
+        Some(level) => cmd.env("RUST_LOG", level),
+        None => cmd.env_remove("RUST_LOG"),
+    };
+    let output = cmd.output().expect("Failed to execute todo-curator");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+    assert!(
+        parsed.is_ok(),
+        "stdout should be exactly one JSON document. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        stdout,
+        stderr
+    );
+    stderr
+}
+
+/// Test that log output goes to stderr, leaving stdout as nothing but the
+/// program's output, so that `--format json` stays machine-readable.
+#[test_log::test]
+fn test_logs_go_to_stderr_not_stdout() {
+    let stderr = run_json_check_outside_repo("todo_curator_logs_to_stderr", Some("info"));
+    assert!(
+        stderr.contains("No project detected!") && stderr.contains("not in a valid git repository"),
+        "Expected ERROR and WARN logs on stderr with RUST_LOG=info. Got:\n{}",
+        stderr
+    );
+}
+
+/// Test that with RUST_LOG unset, logs default to INFO level.
+#[test_log::test]
+fn test_logs_default_to_info_level() {
+    let stderr = run_json_check_outside_repo("todo_curator_logs_default_level", None);
+    assert!(
+        stderr.contains("not in a valid git repository"),
+        "Expected WARN log on stderr with RUST_LOG unset. Got:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("Extracting TODO references"),
+        "Expected no DEBUG log with RUST_LOG unset. Got:\n{}",
+        stderr
+    );
+}
+
+/// Test that RUST_LOG can enable levels below INFO.
+#[test_log::test]
+fn test_rust_log_enables_debug_logs() {
+    let stderr = run_json_check_outside_repo("todo_curator_logs_debug_level", Some("debug"));
+    assert!(
+        stderr.contains("Extracting TODO references"),
+        "Expected DEBUG log on stderr with RUST_LOG=debug. Got:\n{}",
+        stderr
     );
 }
