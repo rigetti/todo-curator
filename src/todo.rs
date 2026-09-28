@@ -6,9 +6,22 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::{checker::ProjectDetection, ReferenceWarning};
+
+/// Files excluded by default, in addition to any user-supplied exclude regex.
+///
+/// Like the user regex, it is matched against each file's path relative to the scanned
+/// directory, without a leading `./`: lock files and `CHANGELOG.md` (generated, not
+/// outstanding work) anywhere, plus root-level relint configs and mermaid bundles.
+/// Disable with [`TodoExtractor::exclude_file_defaults`].
+pub const DEFAULT_EXCLUDE_FILE_REGEX: &str =
+    r"\.lock$|^(relint.*\.ya?ml|mermaid.*\.js)$|(^|/)CHANGELOG\.md$";
+
+static DEFAULT_EXCLUDE_FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(DEFAULT_EXCLUDE_FILE_REGEX).expect("default exclude regex is valid")
+});
 
 /// Walk source files in a directory, respecting `.gitignore` and standard filters.
 /// Yields only regular files (skips directories, symlinks, errors).
@@ -213,6 +226,7 @@ pub struct TodoExtractor {
     todo_ref_pattern: Regex,
     patterns: Vec<(Regex, ExtractorFn)>,
     exclude_file_regex: Option<Regex>,
+    exclude_file_defaults: bool,
 }
 
 impl Default for TodoExtractor {
@@ -542,7 +556,25 @@ impl TodoExtractor {
             todo_ref_pattern,
             patterns,
             exclude_file_regex,
+            exclude_file_defaults: true,
         })
+    }
+
+    /// Whether to skip files matching [`DEFAULT_EXCLUDE_FILE_REGEX`] (default `true`).
+    ///
+    /// The user exclude regex, if any, applies either way.
+    #[must_use]
+    pub const fn exclude_file_defaults(mut self, enabled: bool) -> Self {
+        self.exclude_file_defaults = enabled;
+        self
+    }
+
+    fn is_excluded(&self, relative_path: &str) -> bool {
+        (self.exclude_file_defaults && DEFAULT_EXCLUDE_FILE_PATTERN.is_match(relative_path))
+            || self
+                .exclude_file_regex
+                .as_ref()
+                .is_some_and(|pattern| pattern.is_match(relative_path))
     }
 
     fn extract_token_reference(
@@ -593,11 +625,8 @@ impl TodoExtractor {
                 .to_string_lossy()
                 .to_string();
 
-            if self
-                .exclude_file_regex
-                .as_ref()
-                .is_some_and(|pattern| pattern.is_match(&relative_file_path_str))
-            {
+            if self.is_excluded(&relative_file_path_str) {
+                tracing::debug!("Skipping excluded file: {}", path.display());
                 continue;
             }
 

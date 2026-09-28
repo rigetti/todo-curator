@@ -1265,3 +1265,317 @@ fn test_cross_project_shorthand_disambiguation() {
         refs
     );
 }
+
+/// Files (relative to the scan root) matched by the default exclusion regex.
+const DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
+    "Cargo.lock",
+    "sub/Cargo.lock",
+    "relint-foo.yaml",
+    "relint.yml",
+    "mermaid.min.js",
+    "CHANGELOG.md",
+    "sub/CHANGELOG.md",
+    "crates/foo/CHANGELOG.md",
+];
+
+/// Files that the default exclusion regex must not match. The relint and mermaid
+/// alternatives are anchored to the scan root, so nested copies are still checked.
+const NOT_DEFAULT_EXCLUDED_FIXTURES: &[&str] = &[
+    "keep.rs",
+    "todo.yaml",
+    "MY_CHANGELOG.md",
+    "docs/MY_CHANGELOG.md",
+    "docs/relint-foo.yaml",
+    "sub/mermaid.min.js",
+];
+
+fn all_exclusion_fixtures() -> Vec<&'static str> {
+    DEFAULT_EXCLUDED_FIXTURES
+        .iter()
+        .chain(NOT_DEFAULT_EXCLUDED_FIXTURES)
+        .copied()
+        .collect()
+}
+
+/// Create a fresh directory containing every exclusion fixture,
+/// each with one invalid TODO-like line.
+fn write_exclusion_fixtures(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    for rel in all_exclusion_fixtures() {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "- reword comment to avoid TODO-lint false positive\n",
+        )
+        .unwrap();
+    }
+    root
+}
+
+/// Violation file paths, relative to `root`, with `/` separators, sorted.
+fn violation_paths(
+    root: &std::path::Path,
+    violations: &[todo_curator::todo::LintViolation],
+) -> Vec<String> {
+    let mut paths: Vec<String> = violations
+        .iter()
+        .map(|v| {
+            let p = std::path::Path::new(&v.file_path);
+            let p = p.strip_prefix(root).unwrap_or(p);
+            p.components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn sorted(items: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = items.iter().map(|s| (*s).to_string()).collect();
+    v.sort();
+    v
+}
+
+fn without(items: &[&str], excluded: &[&str]) -> Vec<String> {
+    let kept: Vec<&str> = items
+        .iter()
+        .copied()
+        .filter(|p| !excluded.contains(p))
+        .collect();
+    sorted(&kept)
+}
+
+/// Lock files, relint configs, mermaid bundles, and the root changelog are skipped
+/// by default, without any `--exclude-file-regex`.
+#[test_log::test]
+fn test_default_exclusions_apply_without_custom_regex() {
+    let root = write_exclusion_fixtures("todo_curator_default_exclusions");
+
+    let extraction = extract_todos(&root, "").unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        sorted(NOT_DEFAULT_EXCLUDED_FIXTURES),
+        "Default-excluded files should not be linted. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+/// A user-supplied exclude regex adds to the default exclusions rather than
+/// replacing them (the failure mode in qcs-infrastructure!92, where a job-level
+/// override dropped the template's `CHANGELOG\.md` alternative).
+#[test_log::test]
+fn test_custom_exclude_regex_is_additive_to_defaults() {
+    let root = write_exclusion_fixtures("todo_curator_additive_exclusions");
+
+    let extraction = extract_todos(&root, r"todo\.yaml").unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        without(NOT_DEFAULT_EXCLUDED_FIXTURES, &["todo.yaml"]),
+        "Custom regex should apply in addition to the defaults. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+/// `TodoExtractor::exclude_file_defaults(false)` disables only the default exclusions.
+#[test_log::test]
+fn test_exclude_file_defaults_disabled() {
+    use todo_curator::todo::TodoExtractor;
+    let root = write_exclusion_fixtures("todo_curator_defaults_disabled");
+
+    let extraction = TodoExtractor::with_exclude_file_regex(r"todo\.yaml")
+        .unwrap()
+        .exclude_file_defaults(false)
+        .extract_from_directory(&root)
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        violation_paths(&root, &extraction.lint_violations),
+        without(&all_exclusion_fixtures(), &["todo.yaml"]),
+        "Only the custom regex should apply. Got: {:#?}",
+        extraction.lint_violations
+    );
+}
+
+/// Run `check-invalid --format json` in `root` and return the violation paths,
+/// without the `./` prefix, sorted.
+fn cli_violation_paths(
+    root: &std::path::Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Vec<String> {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.args(["check-invalid", "--format", "json"])
+        .args(args)
+        .current_dir(root)
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_REGEX")
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS")
+        .env_remove("TODO_CURATOR_FORMAT")
+        .env_remove("TODO_CURATOR_PATH")
+        .env_remove("RUST_LOG");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("Failed to execute todo-curator");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Log lines (tracing writes to stdout) precede the JSON document.
+    let json_start = if stdout.starts_with('{') {
+        0
+    } else {
+        stdout.find("\n{").map_or(0, |i| i + 1)
+    };
+    let json: serde_json::Value = serde_json::from_str(&stdout[json_start..]).unwrap_or_else(|e| {
+        panic!("Expected JSON output ({e}). Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+    });
+    let mut paths: Vec<String> = json["lint_violations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("Expected lint_violations array. Got:\n{stdout}"))
+        .iter()
+        .map(|v| {
+            let p = v["file_path"]
+                .as_str()
+                .expect("file_path should be a string");
+            p.strip_prefix("./").unwrap_or(p).to_string()
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// The CLI applies the default exclusions, additively with `--exclude-file-regex`.
+#[test_log::test]
+fn test_cli_default_exclusions_are_additive() {
+    let root = write_exclusion_fixtures("todo_curator_cli_default_exclusions");
+    let default_only = cli_violation_paths(&root, &[], &[]);
+    let with_custom = cli_violation_paths(&root, &["--exclude-file-regex", r"todo\.yaml"], &[]);
+    let with_custom_env = cli_violation_paths(
+        &root,
+        &[],
+        &[("TODO_CURATOR_EXCLUDE_FILE_REGEX", r"todo\.yaml")],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(default_only, sorted(NOT_DEFAULT_EXCLUDED_FIXTURES));
+    let expected = without(NOT_DEFAULT_EXCLUDED_FIXTURES, &["todo.yaml"]);
+    assert_eq!(with_custom, expected);
+    assert_eq!(with_custom_env, expected);
+}
+
+/// `--exclude-file-defaults=false` disables the default exclusions; the user regex
+/// still applies.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_false_flag() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_off_flag");
+    let paths = cli_violation_paths(
+        &root,
+        &[
+            "--exclude-file-defaults=false",
+            "--exclude-file-regex",
+            r"todo\.yaml",
+        ],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(paths, without(&all_exclusion_fixtures(), &["todo.yaml"]));
+}
+
+/// Falsey `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS` disables the default exclusions;
+/// the user regex still applies.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_env_falsey() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_off_env");
+    let expected = without(&all_exclusion_fixtures(), &["todo.yaml"]);
+    for value in ["false", "0", "no", "off", "FALSE"] {
+        let paths = cli_violation_paths(
+            &root,
+            &[],
+            &[
+                ("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS", value),
+                ("TODO_CURATOR_EXCLUDE_FILE_REGEX", r"todo\.yaml"),
+            ],
+        );
+        assert_eq!(
+            paths, expected,
+            "TODO_CURATOR_EXCLUDE_FILE_DEFAULTS={value:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Truthy or empty `TODO_CURATOR_EXCLUDE_FILE_DEFAULTS` keeps the defaults. Empty
+/// matters because CI systems routinely pass unset variables through as empty strings.
+#[test_log::test]
+fn test_cli_exclude_file_defaults_env_truthy_or_empty() {
+    let root = write_exclusion_fixtures("todo_curator_cli_defaults_on_env");
+    let expected = sorted(NOT_DEFAULT_EXCLUDED_FIXTURES);
+    for value in ["", "true", "1", "yes", "on"] {
+        let paths =
+            cli_violation_paths(&root, &[], &[("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS", value)]);
+        assert_eq!(
+            paths, expected,
+            "TODO_CURATOR_EXCLUDE_FILE_DEFAULTS={value:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn run_check_invalid(root: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> String {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.arg("check-invalid")
+        .args(args)
+        .current_dir(root)
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_REGEX")
+        .env_remove("TODO_CURATOR_EXCLUDE_FILE_DEFAULTS")
+        .env_remove("TODO_CURATOR_FORMAT")
+        .env_remove("TODO_CURATOR_PATH")
+        .env_remove("RUST_LOG");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("Failed to execute todo-curator");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("Invalid TODO-like comments:"),
+        "Expected invalid TODO output. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+    );
+    stdout
+}
+
+/// The exclude regex is matched against the path relative to `--path`, *without* a
+/// leading `./`, even though violations are reported as `./<file>` when `--path` is
+/// the default `.`. So anchored patterns such as `^notes\.md$` work as expected.
+#[test_log::test]
+fn test_cli_exclude_regex_is_matched_without_dot_slash_prefix() {
+    let root = std::env::temp_dir().join("todo_curator_exclude_dot_slash");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for rel in ["notes.md", "sub/notes.md", "keep.rs"] {
+        std::fs::write(root.join(rel), "// TODO without a reference\n").unwrap();
+    }
+
+    let stdout = run_check_invalid(&root, &["--exclude-file-regex", r"^notes\.md$"], &[]);
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        stdout.contains("./keep.rs") && stdout.contains("./sub/notes.md"),
+        "Unanchored-match files should be reported with a ./ prefix. Got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("./notes.md"),
+        "^notes\\.md$ should exclude the top-level notes.md. Got:\n{stdout}"
+    );
+}
