@@ -12,6 +12,7 @@ use todo_curator::{
     check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
     extract_todos, CheckOutput,
 };
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
@@ -92,7 +93,11 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logs go to stderr so stdout carries only the check output (e.g. JSON).
-    tracing_subscriber::fmt().with_writer(io::stderr).init();
+    // The level comes from RUST_LOG; if unset, only errors are logged.
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     let cli = Cli::parse();
 
     if matches!(cli.command, Commands::ValidateAuth) {

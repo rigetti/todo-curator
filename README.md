@@ -51,6 +51,10 @@ The "short" versions of references are generally preferred.
 When `todo-curator` encounters full URLs,
 it prints `TODO references that can be shortened` with a suggested shorter form.
 
+## Logging
+
+Logs go to stderr; set `RUST_LOG` (e.g. `RUST_LOG=info`) to see more than errors.
+
 ## Integration with CI/CD
 
 ### GitHub Actions
