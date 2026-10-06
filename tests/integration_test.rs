@@ -1265,3 +1265,49 @@ fn test_cross_project_shorthand_disambiguation() {
         refs
     );
 }
+
+#[test_log::test]
+fn test_github_bang_reference_is_pull_request() {
+    use std::fs;
+    use todo_curator::todo::{TodoExtractor, TodoReference};
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_github_bang_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+// TODO(https://github.com/owner/repo!1) schema form
+// TODO(github.com/owner/other!2) bare-host form
+"#;
+    fs::write(temp_dir.join("bang.rs"), content).unwrap();
+
+    let extraction = TodoExtractor::new()
+        .extract_from_directory(&temp_dir)
+        .unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let refs: Vec<_> = extraction
+        .references
+        .iter()
+        .filter(|r| r.file_path().contains("bang.rs"))
+        .collect();
+
+    for (expected_repo, expected_number) in [("owner/repo", 1), ("owner/other", 2)] {
+        assert!(
+            refs.iter().any(|r| matches!(
+                r,
+                TodoReference {
+                    kind: TodoReferenceKind::GitHubPr { repo, number },
+                    ..
+                }
+                if repo == expected_repo && *number == expected_number
+            )),
+            "Should extract {expected_repo}!{expected_number} as a GitHub PR. Got: {refs:#?}"
+        );
+    }
+    assert!(
+        extraction.lint_violations.is_empty(),
+        "Should not lint. Got: {:#?}",
+        extraction.lint_violations
+    );
+}

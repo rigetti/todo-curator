@@ -463,6 +463,26 @@ impl TodoExtractor {
                     },
                 ),
             ),
+            // GitHub PRs with GitLab-style `!` syntax; the github.com host makes it unambiguous:
+            // https://github.com/owner/repo!123
+            // github.com/owner/repo!123
+            (
+                Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/!]+)!(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let repo = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitHubPr { repo, number },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
             // Local GitLab epics: &123
             (
                 Regex::new(r"^&(\d+)$").unwrap(),
