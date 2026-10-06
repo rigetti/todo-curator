@@ -1,3 +1,9 @@
+## 0.1.16 (2026-10-06)
+
+### Features
+
+- permit gitlab-style PR syntax shorthand (#46)
+
 ## 0.1.15 (2026-08-24)
 
 ### Features
