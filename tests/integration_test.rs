@@ -1311,3 +1311,37 @@ fn test_github_bang_reference_is_pull_request() {
         extraction.lint_violations
     );
 }
+
+/// Test that the hidden `--usage-spec` flag prints a usage spec covering every subcommand.
+#[test_log::test]
+fn test_usage_spec_flag_prints_spec() {
+    let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
+        .arg("--usage-spec")
+        .env_remove("RUST_LOG")
+        .output()
+        .expect("Failed to execute todo-curator");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "--usage-spec should exit 0. Got:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("bin todo-curator\n"),
+        "Spec should name the binary. Got:\n{stdout}"
+    );
+    for subcommand in [
+        "check-closed",
+        "check-invalid",
+        "check-all",
+        "check-mr-todos",
+        "validate-auth",
+    ] {
+        assert!(
+            stdout.contains(&format!("cmd {subcommand} ")),
+            "Spec should include subcommand {subcommand}. Got:\n{stdout}"
+        );
+    }
+}

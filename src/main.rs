@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,9 +23,14 @@ enum OutputFormat {
 #[command(name = "todo-curator")]
 #[command(about = "Check TODO comments against issue/MR status", long_about = None)]
 #[command(version)]
+#[command(arg_required_else_help = true)]
 struct Cli {
+    /// Print the usage spec (https://usage.jdx.dev) for this CLI and exit
+    #[arg(long, hide = true)]
+    usage_spec: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(clap::Args)]
@@ -94,13 +99,21 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    if matches!(cli.command, Commands::ValidateAuth) {
+    if cli.usage_spec {
+        clap_usage::generate(&mut Cli::command(), "todo-curator", &mut io::stdout());
+        return Ok(());
+    }
+    let command = cli
+        .command
+        .expect("clap requires a subcommand unless --usage-spec is given");
+
+    if matches!(command, Commands::ValidateAuth) {
         todo_curator::checker::StatusChecker::validate_auth().await?;
         println!("Authentication validated for GitHub and GitLab.");
         return Ok(());
     }
 
-    let path = match &cli.command {
+    let path = match &command {
         Commands::CheckClosed { args }
         | Commands::CheckInvalid { args }
         | Commands::CheckAll { args }
@@ -122,7 +135,7 @@ async fn main() -> Result<()> {
     };
 
     let needs_auth = matches!(
-        cli.command,
+        command,
         Commands::CheckClosed { .. } | Commands::CheckAll { .. } | Commands::CheckMrTodos { .. }
     );
 
@@ -134,7 +147,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    match cli.command {
+    match command {
         Commands::CheckClosed { args } => {
             let Args {
                 path,
