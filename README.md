@@ -51,6 +51,17 @@ The "short" versions of references are generally preferred.
 When `todo-curator` encounters full URLs,
 it prints `TODO references that can be shortened` with a suggested shorter form.
 
+## Shell completions
+
+`todo-curator --usage-spec` prints a [usage](https://usage.jdx.dev) spec.
+With the `usage` CLI installed, generate completions from it, e.g. for zsh:
+
+```sh
+usage generate completion zsh todo-curator --usage-cmd "todo-curator --usage-spec" --install
+```
+
+Supported shells include bash, zsh, fish, PowerShell, and nushell.
+
 ## Integration with CI/CD
 
 ### GitHub Actions
