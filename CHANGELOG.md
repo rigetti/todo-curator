@@ -1,3 +1,9 @@
+## 0.1.17 (2026-10-29)
+
+### Features
+
+- add a `usage` spec for shell completions (#51)
+
 ## 0.1.16 (2026-10-06)
 
 ### Features
