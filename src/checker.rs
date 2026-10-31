@@ -387,6 +387,9 @@ impl StatusChecker {
                 self.check_gitlab_epic(default_project, reference, group.as_deref(), *number)
                     .await
             }
+            TodoReferenceKind::GitLabWorkItem { group, number } => {
+                self.check_gitlab_work_item(reference, group, *number).await
+            }
         }
     }
 
@@ -639,6 +642,98 @@ impl StatusChecker {
         }
     }
 
+    /// Check a group-level work item via GraphQL.
+    ///
+    /// GitLab has no REST endpoint for group work items,
+    /// so this queries `namespace(fullPath:) { workItem(iid:) { title state } }`.
+    async fn check_gitlab_work_item(
+        &self,
+        reference: &TodoReference,
+        group: &str,
+        number: u32,
+    ) -> Result<Option<ClosedReference>> {
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(None);
+        };
+
+        use gitlab::api::{AsyncClient, RestClient};
+        let url = client
+            .instance_endpoint("api/graphql")
+            .context("Failed to build GraphQL endpoint URL")?;
+        let body = serde_json::to_vec(&Self::work_item_query(group, number))?;
+        let request = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(url.as_str())
+            .header(http::header::CONTENT_TYPE, "application/json");
+
+        let response = client
+            .rest_async(request, body)
+            .await
+            .context("Failed to query GitLab work item")?;
+        let status = response.status();
+        let payload: serde_json::Value =
+            serde_json::from_slice(response.body()).with_context(|| {
+                format!("Failed to parse GitLab work item response (HTTP {status})")
+            })?;
+
+        let (state, title) = Self::parse_work_item_response(&payload, group, number)?;
+        if state == "CLOSED" {
+            Ok(Some(ClosedReference {
+                reference: reference.clone(),
+                title,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn work_item_query(group: &str, number: u32) -> serde_json::Value {
+        serde_json::json!({
+            "query": "query($fullPath: ID!, $iid: String!) { namespace(fullPath: $fullPath) { workItem(iid: $iid) { title state } } }",
+            "variables": { "fullPath": group, "iid": number.to_string() },
+        })
+    }
+
+    /// Extract `(state, title)` from a GraphQL work item response.
+    ///
+    /// A missing namespace or work item, or any GraphQL error, is an error (not found).
+    fn parse_work_item_response(
+        payload: &serde_json::Value,
+        group: &str,
+        number: u32,
+    ) -> Result<(String, String)> {
+        if let Some(errors) = payload.get("errors").and_then(|e| e.as_array()) {
+            if !errors.is_empty() {
+                let messages: Vec<&str> = errors
+                    .iter()
+                    .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
+                    .collect();
+                anyhow::bail!("GitLab GraphQL error: {}", messages.join("; "));
+            }
+        }
+        if let Some(message) = payload.get("message").and_then(|m| m.as_str()) {
+            anyhow::bail!("GitLab API error: {message}");
+        }
+
+        let work_item = payload
+            .pointer("/data/namespace/workItem")
+            .filter(|v| !v.is_null())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "GitLab work item not found or inaccessible (group {group}, #{number})"
+                )
+            })?;
+        let state = work_item
+            .get("state")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Work item response missing 'state' field"))?;
+        let title = work_item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no title)");
+        Ok((state.to_string(), title.to_string()))
+    }
+
     pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
         let Some(client) = self.gitlab_client.as_ref() else {
             return Ok(Vec::new());
@@ -746,5 +841,51 @@ impl StatusChecker {
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn work_item_query_targets_group_and_iid() {
+        let q = StatusChecker::work_item_query("rigetti/qcs", 146);
+        assert_eq!(q["variables"]["fullPath"], "rigetti/qcs");
+        assert_eq!(q["variables"]["iid"], "146");
+    }
+
+    #[test]
+    fn parses_open_and_closed_work_items() {
+        let open = json!({"data": {"namespace": {"workItem": {"title": "t", "state": "OPEN"}}}});
+        assert_eq!(
+            StatusChecker::parse_work_item_response(&open, "g", 1).unwrap(),
+            ("OPEN".to_string(), "t".to_string())
+        );
+        let closed =
+            json!({"data": {"namespace": {"workItem": {"title": "t", "state": "CLOSED"}}}});
+        assert_eq!(
+            StatusChecker::parse_work_item_response(&closed, "g", 1)
+                .unwrap()
+                .0,
+            "CLOSED"
+        );
+    }
+
+    #[test]
+    fn missing_namespace_or_work_item_or_errors_are_not_found() {
+        for payload in [
+            json!({"data": {"namespace": null}}),
+            json!({"data": {"namespace": {"workItem": null}}}),
+            json!({"data": null, "errors": [{"message": "boom"}]}),
+            json!({"message": "401 Unauthorized"}),
+            json!({}),
+        ] {
+            assert!(
+                StatusChecker::parse_work_item_response(&payload, "g", 1).is_err(),
+                "{payload}"
+            );
+        }
     }
 }

@@ -706,3 +706,54 @@ async fn test_nonexistent_gitlab_epic() {
         "Status should be failure for non-existent epic"
     );
 }
+
+/// Group-level work item `rigetti#146` must resolve (open or closed, but not "not found").
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_gitlab_group_work_item_exists() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    let test_dir = std::env::temp_dir().join("test_gitlab_group_work_item_exists");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    std::fs::write(test_dir.join("test.rs"), "// TODO rigetti#146:\n")
+        .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_dir.clone()).await;
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    assert!(
+        result.not_found.is_empty(),
+        "Group work item should be found. Got: {:?}",
+        result.not_found
+    );
+}
+
+/// Non-existent group-level work items are reported as not found.
+#[tokio::test]
+#[cfg(feature = "test-integration-gitlab")]
+async fn test_nonexistent_gitlab_group_work_item() {
+    let _gitlab_token =
+        std::env::var("GITLAB_TOKEN").expect("GITLAB_TOKEN must be set for this test");
+
+    let test_dir = std::env::temp_dir().join("test_nonexistent_gitlab_group_work_item");
+    std::fs::create_dir_all(&test_dir).expect("Failed to create test directory");
+    std::fs::write(
+        test_dir.join("test.rs"),
+        "// TODO https://gitlab.com/groups/rigetti/-/work_items/999999:\n",
+    )
+    .expect("Failed to write test file");
+
+    let result = run_closed_reference_check(test_dir.clone()).await;
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    assert!(
+        result.not_found.iter().any(|n| matches!(
+            &n.reference.kind,
+            TodoReferenceKind::GitLabWorkItem { group, number }
+            if group == "rigetti" && *number == 999999
+        )),
+        "Should report non-existent work item. Got: {:?}",
+        result
+    );
+}
