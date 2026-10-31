@@ -49,7 +49,7 @@ inputs:
     required: false
     default: ""
   gitlab-token:
-    description: Token used to resolve GitLab issue, merge-request, and epic references.
+    description: Token used to resolve GitLab issue, merge-request, epic, and group work item references.
     required: false
     default: ""
 

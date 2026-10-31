@@ -36,12 +36,17 @@ In each pattern, `#ref` must be a valid reference (see supported formats below).
   - this uses the "most specific" path, i.e. for `group/sub1/sub2/project`,
     the short-form epic reference only checks for epics in `group/sub1/sub2`.
 - full path to an epic: `group/subgroup&123`
+- group-level work-item: `group#123`
+  - only a single-segment group is supported in this short form,
+    since `group/subgroup#123` means a work-item in the project `group/subgroup`.
+  - the full URL form `gitlab.com/groups/group/subgroup/-/work_items/123` supports nested groups.
+  - checked via the GitLab GraphQL API.
 
 ### GitHub and GitLab
 
 - Full URL: `https://gitlab.com/group/subgroup/repo/-/issues/123`
   - Schema is optional (the reference can start with `gitlab.com` or `github.com`).
-  - This works for GitLab work-items, merge-requests, and epics, and for GitHub issues and pull-requests.
+  - This works for GitLab work-items (project and group level), merge-requests, and epics, and for GitHub issues and pull-requests.
 - Shortened URL: `github.com/owner/repo#7`
 
 ## URL-shortening warnings

@@ -65,6 +65,11 @@ pub enum TodoReferenceKind {
         group: Option<String>,
         number: u32,
     },
+    /// A group-level GitLab work item (not an epic or a project issue).
+    GitLabWorkItem {
+        group: String,
+        number: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -140,6 +145,9 @@ impl TodoReference {
                 number,
                 ..
             } => format!("{}&{}", g, number),
+            TodoReferenceKind::GitLabWorkItem { group, number } => {
+                format!("{}#{}", group, number)
+            }
         }
     }
 
@@ -280,6 +288,37 @@ impl TodoExtractor {
                     },
                 ),
             ),
+            // GitLab group-level work items with optional schema:
+            // https://gitlab.com/groups/group/.../path/-/work_items/123
+            // gitlab.com/groups/group/.../path/-/work_items/123
+            // NOTE: must come BEFORE the project issue pattern, which would otherwise
+            // read `groups/<group>` as a project path.
+            (
+                Regex::new(
+                    r"^(?:https?://)?gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/work_items/(\d+)$",
+                )
+                .unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        // `a/b#N` parses as a project issue, so only a single-segment group
+                        // has a short form that round-trips.
+                        let recommended = group
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                            .then(|| format!("{group}#{number}"));
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabWorkItem { group, number },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            recommended,
+                        ))
+                    },
+                ),
+            ),
             // GitLab issues/work items with optional schema:
             // https://gitlab.com/group/.../repo/-/issues/123
             // gitlab.com/group/.../repo/-/issues/123
@@ -293,6 +332,10 @@ impl TodoExtractor {
                 Box::new(
                     |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
+                        // `groups/...` URLs are group-level; never treat them as projects.
+                        if project == "groups" || project.starts_with("groups/") {
+                            return None;
+                        }
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
                             TodoReferenceKind::GitLabIssue {
@@ -369,6 +412,25 @@ impl TodoExtractor {
                                 project: Some(project),
                                 number,
                             },
+                            line,
+                            file_path,
+                            line_number,
+                            caps.get(0)?.as_str(),
+                            None,
+                        ))
+                    },
+                ),
+            ),
+            // GitLab group-level work items in rendered format: group#123
+            // Only a single path segment; `group/repo#123` is a project issue (above).
+            (
+                Regex::new(r"^([a-zA-Z0-9_-]+)#(\d+)$").unwrap(),
+                Box::new(
+                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                        let group = caps.get(1)?.as_str().to_string();
+                        let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
+                        Some(TodoReference::new(
+                            TodoReferenceKind::GitLabWorkItem { group, number },
                             line,
                             file_path,
                             line_number,

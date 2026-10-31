@@ -388,7 +388,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
         writeln!(
             writer,
             "  {}",
-            r#"use `TODO (<ref>)`, where `<ref>` is `[repo]#<ticket>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#
+            r#"use `TODO (<ref>)`, where `<ref>` is `[repo]#<ticket>`, `<group>#<work-item>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#
                 .yellow()
         )?;
         for violation in &output.lint_violations {

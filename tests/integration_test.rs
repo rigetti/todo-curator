@@ -1345,3 +1345,308 @@ fn test_usage_spec_flag_prints_spec() {
         );
     }
 }
+
+/// Extract references from `content` written to a fresh temp directory named after `name`.
+fn extract_refs_from_content(name: &str, content: &str) -> todo_curator::todo::ExtractionResult {
+    let temp_dir = std::env::temp_dir().join(format!("todo_curator_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::write(temp_dir.join("refs.rs"), content).unwrap();
+    let extraction = todo_curator::todo::TodoExtractor::new()
+        .extract_from_directory(&temp_dir)
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    extraction
+}
+
+/// Find the single reference whose `original_reference` equals `original`.
+fn find_ref<'a>(
+    extraction: &'a todo_curator::todo::ExtractionResult,
+    original: &str,
+) -> &'a todo_curator::todo::TodoReference {
+    extraction
+        .references
+        .iter()
+        .find(|r| r.original_reference == original)
+        .unwrap_or_else(|| panic!("no reference {original:?} in {:#?}", extraction.references))
+}
+
+/// `group#N` (a single path segment) is a group-level work item, not a project issue.
+#[test_log::test]
+fn test_bare_group_shorthand_is_work_item() {
+    let extraction = extract_refs_from_content(
+        "bare_group_work_item",
+        "// TODO rigetti#146: group-level work item\n",
+    );
+    assert!(
+        extraction.lint_violations.is_empty(),
+        "Expected no lint violations. Got: {:#?}",
+        extraction.lint_violations
+    );
+    let r = find_ref(&extraction, "rigetti#146");
+    assert_eq!(
+        r.kind,
+        TodoReferenceKind::GitLabWorkItem {
+            group: "rigetti".to_string(),
+            number: 146
+        }
+    );
+    assert_eq!(r.recommended_format, None, "already in preferred form");
+    assert_eq!(r.display(), "rigetti#146");
+}
+
+/// Work item URLs under `/groups/` parse as group work items, with or without scheme, nested or not.
+#[test_log::test]
+fn test_group_work_item_urls() {
+    let extraction = extract_refs_from_content(
+        "group_work_item_urls",
+        r#"
+// TODO https://gitlab.com/groups/rigetti/-/work_items/146: with scheme
+// TODO gitlab.com/groups/rigetti/-/work_items/147: without scheme
+// TODO https://gitlab.com/groups/rigetti/qcs/services/-/work_items/148: nested group
+// TODO(gitlab.com/groups/rigetti/qcs/-/work_items/149)
+"#,
+    );
+    assert!(
+        extraction.lint_violations.is_empty(),
+        "Expected no lint violations. Got: {:#?}",
+        extraction.lint_violations
+    );
+
+    let cases = [
+        (
+            "https://gitlab.com/groups/rigetti/-/work_items/146",
+            "rigetti",
+            146,
+            Some("rigetti#146"),
+        ),
+        (
+            "gitlab.com/groups/rigetti/-/work_items/147",
+            "rigetti",
+            147,
+            Some("rigetti#147"),
+        ),
+        (
+            "https://gitlab.com/groups/rigetti/qcs/services/-/work_items/148",
+            "rigetti/qcs/services",
+            148,
+            // `a/b#N` would re-parse as a project issue, so no short form exists.
+            None,
+        ),
+        (
+            "gitlab.com/groups/rigetti/qcs/-/work_items/149",
+            "rigetti/qcs",
+            149,
+            None,
+        ),
+    ];
+    for (original, group, number, recommended) in cases {
+        let r = find_ref(&extraction, original);
+        assert_eq!(
+            r.kind,
+            TodoReferenceKind::GitLabWorkItem {
+                group: group.to_string(),
+                number
+            },
+            "for {original}"
+        );
+        assert_eq!(
+            r.recommended_format.as_deref(),
+            recommended,
+            "recommended format for {original}"
+        );
+    }
+}
+
+/// The recommended short form of a work item URL parses back to the same reference kind.
+#[test_log::test]
+fn test_group_work_item_recommended_format_round_trips() {
+    let extraction = extract_refs_from_content(
+        "group_work_item_round_trip",
+        "// TODO gitlab.com/groups/rigetti/-/work_items/146: x\n",
+    );
+    let url_ref = find_ref(&extraction, "gitlab.com/groups/rigetti/-/work_items/146");
+    assert!(
+        matches!(url_ref.kind, TodoReferenceKind::GitLabWorkItem { .. }),
+        "URL should be a work item. Got: {:?}",
+        url_ref.kind
+    );
+    let short = url_ref.recommended_format.clone().expect("has short form");
+    assert_eq!(short, "rigetti#146");
+
+    let round_trip = extract_refs_from_content(
+        "group_work_item_round_trip_2",
+        &format!("// TODO {short}: x\n"),
+    );
+    assert_eq!(find_ref(&round_trip, &short).kind, url_ref.kind);
+}
+
+/// Project-level URLs keep their old meaning, and epics are unaffected.
+#[test_log::test]
+fn test_work_item_parsing_does_not_regress_issues_and_epics() {
+    let extraction = extract_refs_from_content(
+        "work_item_no_regression",
+        r#"
+// TODO https://gitlab.com/group/proj/-/work_items/1: project work item URL
+// TODO gitlab.com/group/sub/proj/-/issues/2: project issue URL
+// TODO gitlab.com/groups/x/-/epics/3: epic URL
+// TODO group/proj#4: rendered project issue
+// TODO x/y&5: rendered epic
+"#,
+    );
+    assert!(
+        extraction.lint_violations.is_empty(),
+        "{:#?}",
+        extraction.lint_violations
+    );
+
+    let issue = |project: &str, number| TodoReferenceKind::GitLabIssue {
+        project: Some(project.to_string()),
+        number,
+    };
+    assert_eq!(
+        find_ref(&extraction, "https://gitlab.com/group/proj/-/work_items/1").kind,
+        issue("group/proj", 1)
+    );
+    assert_eq!(
+        find_ref(&extraction, "gitlab.com/group/sub/proj/-/issues/2").kind,
+        issue("group/sub/proj", 2)
+    );
+    assert_eq!(
+        find_ref(&extraction, "gitlab.com/groups/x/-/epics/3").kind,
+        TodoReferenceKind::GitLabEpic {
+            group: Some("x".to_string()),
+            number: 3
+        }
+    );
+    assert_eq!(
+        find_ref(&extraction, "group/proj#4").kind,
+        issue("group/proj", 4)
+    );
+    assert_eq!(
+        find_ref(&extraction, "x/y&5").kind,
+        TodoReferenceKind::GitLabEpic {
+            group: Some("x/y".to_string()),
+            number: 5
+        }
+    );
+}
+
+/// A group work item URL yields exactly one reference, of kind work item.
+#[test_log::test]
+fn test_groups_url_is_exactly_one_work_item() {
+    let extraction = extract_refs_from_content(
+        "groups_not_issue",
+        "// TODO gitlab.com/groups/rigetti/-/work_items/146: x\n",
+    );
+    assert_eq!(
+        extraction.references.len(),
+        1,
+        "{:#?}",
+        extraction.references
+    );
+    assert!(matches!(
+        extraction.references.iter().next().unwrap().kind,
+        TodoReferenceKind::GitLabWorkItem { .. }
+    ));
+}
+
+/// Several references on one line each keep their own kind.
+#[test_log::test]
+fn test_work_item_with_other_refs_on_one_line() {
+    let extraction = extract_refs_from_content(
+        "work_item_multi",
+        "// TODO(rigetti#146, group/proj#4, x/y&5, #7, github.com/o/r#8)\n",
+    );
+    assert_eq!(
+        find_ref(&extraction, "rigetti#146").kind,
+        TodoReferenceKind::GitLabWorkItem {
+            group: "rigetti".into(),
+            number: 146
+        }
+    );
+    assert!(matches!(
+        find_ref(&extraction, "group/proj#4").kind,
+        TodoReferenceKind::GitLabIssue {
+            project: Some(_),
+            number: 4
+        }
+    ));
+    assert!(matches!(
+        find_ref(&extraction, "x/y&5").kind,
+        TodoReferenceKind::GitLabEpic { .. }
+    ));
+    assert!(matches!(
+        find_ref(&extraction, "#7").kind,
+        TodoReferenceKind::GitLabIssue {
+            project: None,
+            number: 7
+        }
+    ));
+    assert!(matches!(
+        find_ref(&extraction, "github.com/o/r#8").kind,
+        TodoReferenceKind::GitHubIssueOrPr { .. }
+    ));
+    assert_eq!(extraction.references.len(), 5);
+}
+
+/// Malformed work item references are not references (and do not panic).
+#[test_log::test]
+fn test_malformed_work_item_references_are_rejected() {
+    for bad in [
+        "gitlab.com/groups/-/work_items/1",
+        "gitlab.com/groups//-/work_items/1",
+        "gitlab.com/groups/rigetti/-/work_items/abc",
+        "gitlab.com/groups/rigetti/-/work_items/",
+        "github.com/groups/x/-/work_items/1",
+        "rigetti#99999999999",
+        "rigetti#",
+        "#",
+    ] {
+        let extraction = extract_refs_from_content("work_item_bad", &format!("// TODO {bad}: x\n"));
+        assert!(
+            !extraction
+                .references
+                .iter()
+                .any(|r| matches!(r.kind, TodoReferenceKind::GitLabWorkItem { .. })),
+            "{bad} must not be a work item. Got: {:#?}",
+            extraction.references
+        );
+    }
+}
+
+/// Short-form suggestions for a work item URL use the work item short form,
+/// independent of the detected project (`#N` would mean a project issue).
+#[test_log::test]
+fn test_work_item_url_suggestion() {
+    let extraction = extract_refs_from_content(
+        "work_item_suggestion",
+        r#"
+// TODO gitlab.com/groups/rigetti/-/work_items/146: x
+// TODO gitlab.com/groups/rigetti/qcs/-/work_items/147: nested
+"#,
+    );
+    let r = find_ref(&extraction, "gitlab.com/groups/rigetti/-/work_items/146");
+    assert!(matches!(r.kind, TodoReferenceKind::GitLabWorkItem { .. }));
+    for detection in [
+        ProjectDetection::None,
+        ProjectDetection::GitHub("rigetti/proj".to_string()),
+        ProjectDetection::GitLab("rigetti/proj".to_string()),
+        ProjectDetection::GitLab("rigetti".to_string()),
+    ] {
+        let warning = r.suggest_simplified_format(&detection).expect("suggestion");
+        assert_eq!(warning.suggestion, "rigetti#146");
+    }
+
+    let nested = find_ref(
+        &extraction,
+        "gitlab.com/groups/rigetti/qcs/-/work_items/147",
+    );
+    assert!(matches!(
+        nested.kind,
+        TodoReferenceKind::GitLabWorkItem { .. }
+    ));
+    assert!(nested
+        .suggest_simplified_format(&ProjectDetection::None)
+        .is_none());
+}
