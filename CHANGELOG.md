@@ -1,3 +1,9 @@
+## 0.1.18 (2026-11-01)
+
+### Features
+
+- support GitLab group-level work items (#52)
+
 ## 0.1.17 (2026-10-29)
 
 ### Features
