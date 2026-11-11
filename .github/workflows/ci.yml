@@ -109,6 +109,30 @@ jobs:
         include:
           - name: github
             features: test-integration-github
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.4.10
+    with:
+      cache-key: api-integration
+      test-command: >-
+        cargo test --test api_integration_test
+        --features ${{ matrix.features }} --no-fail-fast
+    secrets:
+      github-api-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
+
+  # The GitLab integration tests, split out so that `ci-gate` does not wait on
+  # or require them: `continue-on-error` is not available on jobs that call a
+  # reusable workflow, so excluding the job from `needs` is how a failure stays
+  # visible without blocking the merge.
+  api-integration-gitlab:
+    name: api-integration-gitlab (${{ matrix.name }})
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
           - name: gitlab
             features: test-integration-gitlab
           - name: combined
