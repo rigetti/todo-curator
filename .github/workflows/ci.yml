@@ -122,6 +122,9 @@ jobs:
   # or require them: `continue-on-error` is not available on jobs that call a
   # reusable workflow, so excluding the job from `needs` is how a failure stays
   # visible without blocking the merge.
+  #
+  # TODO(#55): validate the GitLab integration tests before merge again,
+  # then fold this job back into `api-integration` and `ci-gate`.
   api-integration-gitlab:
     name: api-integration-gitlab (${{ matrix.name }})
     if: >-
