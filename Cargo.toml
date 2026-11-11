@@ -21,7 +21,17 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 colored = "2.1"
 tokio = { version = "1.41", features = ["full"] }
-octocrab = "0.41"
+octocrab = { version = "0.41", default-features = false, features = [
+    "follow-redirect",
+    "retry",
+    "rustls",
+    "timeout",
+    "tracing",
+    "default-client",
+    # `gitlab` pulls in `reqwest` with `aws-lc-rs`; enabling `ring` as well
+    # leaves `rustls` unable to pick a default crypto provider.
+    "rustls-aws-lc-rs",
+] }
 gitlab = "0.1905"
 grep-searcher = "0.1"
 grep-matcher = "0.1"
