@@ -5,6 +5,11 @@ name: Prepare prerelease
 # job's own GITHUB_TOKEN. Dispatching on main fails, since main releases
 # through the release PR (release.yml).
 #
+# The purpose of this flow is to let consumers use a version of the tool that
+# includes unmerged work, for example to try a branch in another repository's
+# CI before the change lands. It is not a release candidate of the next
+# release: the tag points at the branch head, not at a release PR.
+#
 # release-plz has no prerelease flow of its own, so this computes the next
 # version with `release-plz update`, appends `-<label>.<n>`, and tags a commit
 # that exists only under that tag. Nothing is pushed to the branch: a bump
