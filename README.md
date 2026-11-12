@@ -110,29 +110,25 @@ the install off GitHub's unauthenticated API rate limit, which can be as low as
 If a repository's own tests or docs contain TODO-shaped text, set
 `exclude-file-regex` or the checks will flag them.
 
-### Shared QCS workflows
-
-Reusable Rust CI and release workflows live in
-[`rigetti/qcs-gha-infrastructure`](https://github.com/rigetti/qcs-gha-infrastructure).
-This repository's CI (`.github/workflows/ci.yml`) is a working example.
-Releases are inlined, see below.
-
 ## Releasing
 
-Releases use [release-plz](https://release-plz.dev), configured in
-`release-plz.toml`.
+Releases are always started by hand, with [release-plz](https://release-plz.dev)
+configured in `release-plz.toml`.
+Nothing releases automatically on a push.
 
-1. Merge Conventional Commits (`feat:`, `fix:`, or breaking `!`) to `main`.
-   `release.yml` opens or updates a release PR with the version bump and
-   changelog.
-2. The release PR is created by `GITHUB_TOKEN`, so its `pull_request` runs wait
-   in `action_required`: approve them in the Actions tab, then review and merge
-   the PR as usual.
-3. Merging starts `release.yml` again: it tags the merge commit, creates a draft
-   release, builds the binaries, attaches them, and only then publishes the
+1. Run the `Prepare release` workflow on `main`.
+   It opens or updates a release PR (version bump and changelog) from the
+   Conventional Commits (`feat:`, `fix:`, or breaking `!`) since the last
    release.
-   If it fails midway, re-run the workflow with the `tag` input set to the new
-   tag.
+2. The PR is created by `GITHUB_TOKEN`, so its `pull_request` runs wait in
+   `action_required`: approve them in the Actions tab.
+   They go stale after later pushes to `main`; close and reopen the PR to rerun
+   them.
+   Then review and merge it.
+3. Run the `Release` workflow on `main`.
+   It tags the merged commit, creates a draft release, builds the binaries,
+   attaches them, and only then publishes the release.
+   If it fails midway, run it again: it reuses the tag and the draft.
 
-For a release candidate, dispatch `prepare-prerelease.yml` on a branch.
-It tags a commit that is not on any branch, so nothing lands in the branch.
+For a build of unmerged work, run `Prepare prerelease` on a branch.
+It pushes a tag only; nothing lands on the branch.

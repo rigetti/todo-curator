@@ -1,70 +1,42 @@
 name: Release
 
-# Releases with release-plz, using only the job's own GITHUB_TOKEN.
+# Manual. Run on `main` after the release PR (prepare-release.yml) is merged.
+# Releases the version in Cargo.toml: `release-plz release` tags the commit and
+# creates a draft GitHub release, `build` compiles the binaries from the tag,
+# and `publish` attaches them and only then undrafts the release, so a release
+# is never visible without the binaries that make it installable.
 #
-# 1. Every push to `main` updates the release PR (`release-pr`): version bump
-#    and changelog, from Conventional Commits.
-# 2. A maintainer merges that PR. A human push is what starts this workflow
-#    again; pushes made with GITHUB_TOKEN start no workflows.
-# 3. `release` tags the merge commit and creates the GitHub release as a draft
-#    (`git_release_draft` in release-plz.toml). `build` compiles the binaries,
-#    and `publish` attaches them and only then undrafts the release, so a
-#    release is never visible without the binaries that make it installable.
-#
-# If a run fails after `release` created the tag and draft, re-run it with the
-# `tag` input to build and publish that draft. For a release candidate cut from
-# a branch, use prepare-prerelease.yml.
+# Safe to run again after a failure: an existing tag is reused, a missing draft
+# is created, and uploads overwrite. It refuses a version that is already a
+# published release.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Resume: build and publish the existing draft release for this tag."
-        required: false
-        default: ""
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TAG_RE: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
+
 jobs:
-  release-pr:
-    if: github.event_name == 'push' && github.repository_owner == 'rigetti'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    concurrency:
-      group: release-plz-pr
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
-
-      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
   release:
-    if: github.repository_owner == 'rigetti'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: read
-    # Not cancelled by a newer push: that could skip a release.
-    concurrency:
-      group: release-plz-release
-      cancel-in-progress: false
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
+      - name: Refuse other branches
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Dispatch this on main, after the release PR is merged."
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -73,29 +45,67 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
 
+      - name: Determine the tag and refuse a published release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
+          tag="v${version}"
+          if [[ ! "${tag}" =~ ${TAG_RE} ]]; then
+            echo "::error::'${tag}' is not a valid version tag."
+            exit 1
+          fi
+
+          if out="$(gh release view "${tag}" --repo "${REPO}" --json isDraft -q .isDraft 2>/dev/null)" \
+             && [[ "${out}" == "false" ]]; then
+            echo "::error::${tag} is already a published release; merge a release PR with a new version first."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            if ! git merge-base --is-ancestor "refs/tags/${tag}" HEAD; then
+              echo "::error::${tag} exists but is not an ancestor of main."
+              exit 1
+            fi
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Tag and create the draft release
-        id: release-plz
-        if: inputs.tag == ''
+        if: steps.version.outputs.exists == 'false'
         uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # Empty when the merged commit was not a release PR: nothing to build.
-      - name: Determine the tag
-        id: tag
+      # Covers a tag whose release was never created, and checks release-plz
+      # did what was asked.
+      - name: Ensure the draft release exists
         env:
-          RESUME_TAG: ${{ inputs.tag }}
-          RELEASES: ${{ steps.release-plz.outputs.releases }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          tag="${RESUME_TAG}"
-          if [[ -z "${tag}" && -n "${RELEASES}" ]]; then
-            tag="$(echo "${RELEASES}" | jq -r '.[0].tag // empty')"
+          if ! gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::release-plz did not create ${TAG}."
+            exit 1
           fi
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "Releasing: ${tag:-nothing}"
+          if gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "Release ${TAG} exists."
+          else
+            awk -v v="${VERSION}" '/^## /{p=($2==v); next} p' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+            gh release create "${TAG}" --repo "${REPO}" --verify-tag --draft \
+              --title "${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
+          fi
 
   build:
     needs: release
@@ -114,7 +124,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ needs.release.outputs.tag }}
-          persist-credentials: false
 
       # Keep the path short: deep dependency trees overrun Windows' path limit.
       - name: Use a short target directory
@@ -172,6 +181,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: release-*
           path: release
           merge-multiple: true
 
@@ -182,13 +192,16 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
+          if [[ ! "${TAG}" =~ ${TAG_RE} ]]; then
+            echo "::error::'${TAG}' is not a valid version tag."
+            exit 1
+          fi
+          # Overwriting assets of a published release would change what users
+          # already installed.
+          if [[ "$(gh release view "${TAG}" --repo "${REPO}" --json isDraft -q .isDraft)" != "true" ]]; then
+            echo "::error::${TAG} is not a draft; refusing to modify it."
+            exit 1
+          fi
           ls -l release
           gh release upload "${TAG}" release/* --repo "${REPO}" --clobber
-
-          # Drafts cannot be "latest", so set it when undrafting (not for a
-          # prerelease, which cannot be either).
-          latest=(--latest)
-          if [[ "${TAG}" == *-* ]]; then
-            latest=()
-          fi
-          gh release edit "${TAG}" --repo "${REPO}" --draft=false "${latest[@]}"
+          gh release edit "${TAG}" --repo "${REPO}" --draft=false

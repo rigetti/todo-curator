@@ -2,7 +2,7 @@
 name = "todo-curator"
 version = "0.1.18"
 edition = "2021"
-publish = ["crates-io"]
+publish = false
 
 [[bin]]
 name = "todo-curator"

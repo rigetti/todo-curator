@@ -2,6 +2,8 @@
 [workspace]
 # The crate is not on crates.io: take the current version from git tags and
 # never run `cargo publish`.
+# Without this, `publish = false` in `Cargo.toml` makes release-plz skip the
+# package entirely (verified).
 git_only = true
 
 # `release-plz release` creates the tag and the GitHub release as a draft.
@@ -11,20 +13,26 @@ git_release_draft = true
 git_release_type = "auto"
 git_tag_name = "v{{ version }}"
 
-# Release only when the release PR is merged, not on every push to `main`.
-release_always = false
+# Releases are always started by hand (release.yml, run on `main` after the
+# release PR is merged), so release whatever version in `Cargo.toml` has no tag
+# yet. `release_always = false` would instead require the latest commit on
+# `main` to be the release PR merge, and fail on any commit pushed after it.
+release_always = true
 
-# Like knope, only `feat`, `fix`, and breaking changes make a release.
-release_commits = '^(feat|fix)(\(.+\))?!?:'
+# Like knope: `feat`, `fix`, and any breaking change make a release. Breaking
+# is `!` after the type, or a `BREAKING CHANGE:` footer.
+release_commits = '(?m)^(feat|fix)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|^BREAKING[ -]CHANGE:'
 
-# The release PR needs the required checks; see README's release section.
 pr_labels = ["release"]
 
 [changelog]
 protect_breaking_commits = true
 tag_pattern = "v[0-9].*"
-header = ""
+header = "# Changelog\n"
+trim = false
 commit_parsers = [
+    { message = '^[a-z]+(\(.+\))?!:', group = "Breaking changes" },
+    { body = 'BREAKING[ -]CHANGE', group = "Breaking changes" },
     { message = '^feat', group = "Features" },
     { message = '^fix', group = "Fixes" },
     { message = '.*', skip = true },
@@ -34,7 +42,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group }}
 {% for commit in commits %}
-- {% if commit.breaking %}**breaking** {% endif %}{{ commit.message }}
-{% endfor %}
-{% endfor %}
+- {{ commit.message }}
+{%- endfor %}
+{% endfor -%}
 """

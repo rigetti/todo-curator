@@ -5,57 +5,83 @@ Decisions fixed by the user:
 - Replace knope entirely.
 - Only `GITHUB_TOKEN`: no PAT, no GitHub App.
 - No shared `qcs-gha-infrastructure` workflows on the release path: inlined.
+- Releases are always manual: every release workflow is `workflow_dispatch`
+  only; nothing triggers on a push.
+- Prerelease keeps a local bump commit on top of the branch head, so
+  `Cargo.toml` in the tagged tree matches the binary's version.
+  Only the tag is pushed; nothing lands on the branch.
+- `--latest` is never passed.
+  GitHub's default selection of the "latest" release is relied on.
 
-## Choices and assumptions
+## Workflows
 
-- release-plz 0.4.3 and `release-plz/action` v0.5.148 (commit
-  `66b324fd`), the latest releases at the time of writing.
-- `git_only = true`: the crate is not on crates.io (`todo-curator` does not
-  exist there) although `Cargo.toml` has `publish = ["crates-io"]`.
-  release-plz takes the current version from tags and never runs
-  `cargo publish`.
-  `Cargo.toml` is left alone; release-plz needs no change there.
-- Tag `vX.Y.Z` (`git_tag_name`), so history stays continuous.
-  Verified locally: baseline resolves to `v0.1.18`; the existing
-  `v0.1.19-rc.1` tag is ignored on `main` (not an ancestor).
-- `release_always = false`: release only when the release PR is merged.
-  release-plz identifies it by its `release-plz-` branch prefix.
-- `release_commits` restricts releases to `feat`, `fix`, and breaking commits,
-  as knope did.
-  Verified locally: a `chore:` commit alone yields "no commit matches".
-  Note release-plz only counts commits that touch package files.
-- Changelog: `header = ""` and a custom body keep the existing
-  `## X.Y.Z (date)` / `### Features` / `### Fixes` format.
-  Verified on a throwaway clone: the new entry is prepended above `0.1.18`.
-  Only `feat` and `fix` commits are listed; others are skipped.
-- Draft-then-publish invariant: `git_release_draft = true`; `publish` job runs
-  `gh release upload --clobber` then `gh release edit --draft=false --latest`.
-  Not run end to end: it needs a real release.
-  Untested assumption: release-plz pushes the tag even for a draft release, so
-  `build` can check out `refs/tags/<tag>`.
-- No tag-triggered or release-triggered workflow: tags and releases made with
-  `GITHUB_TOKEN` start nothing.
-  One workflow run (`release.yml`, started by the human merge) does
-  tag, build, upload, publish.
-- Resume path: `workflow_dispatch` with a `tag` input skips `release-plz
-  release` and builds and publishes that tag, since a re-run of `release` finds
-  the tag already present and releases nothing.
-- Prereleases: release-plz has none.
-  `set-version` rewrites the latest changelog heading, so it is unusable
-  here.
-  Instead `prepare-prerelease.yml` runs `release-plz update --no-changelog` to
-  get the next stable version, appends `-<label>.<n>`, commits, and pushes only
-  a tag (a commit on no branch), then builds and publishes a prerelease
-  draft-then-undraft.
-  Reason for not pushing to the branch: the bump would reach `main` with a
-  prerelease `Cargo.toml` version, which release-plz would release.
-  Tradeoff: the tag's commit is not in branch history.
-  The bump/number logic was run locally; the workflow was not dispatched.
-- Release PRs from `GITHUB_TOKEN` need `pull_request` runs approved by hand
-  and the repo setting for PR creation (see PR description).
-- `ci.yml`: only comments updated; `ci-gate` and the `action` job are unchanged.
-- Deleted: `knope.toml`, `cli-release.yml`, `prepare-release.yml`.
-- Third-party actions pinned to SHAs; release-plz binary for the prerelease job
-  downloaded from its GitHub release (no extra action).
-- `actionlint` could not be installed here (download denied); workflows were
-  parsed with `yq` and their `run` blocks checked with `bash -n`.
+- `prepare-release.yml` (dispatch on `main`): `release-plz release-pr`.
+  The PR's `pull_request` runs wait in `action_required` (PR made by
+  `GITHUB_TOKEN`) and go stale after later pushes to `main`; close and reopen
+  the PR, per the release-plz docs.
+- `release.yml` (dispatch on `main`, after merging the release PR): releases
+  the version in `Cargo.toml`.
+  - Validates the tag against a strict SemVer regex (no leading zeros).
+  - Refuses a version that is already a published (non-draft) release.
+  - Tag missing: `release-plz release` creates tag and draft.
+    Tag present: reused, and it must be an ancestor of `main`.
+    Draft missing: created with `gh release create --draft --verify-tag` and
+    the changelog section as notes.
+  - `build` from the tag; `publish` requires a draft, then
+    `gh release upload --clobber` and `gh release edit --draft=false`.
+  - Re-running after a failure is the recovery path (no `tag` input).
+- `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
+  from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
+  computed from existing tags.
+  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`.
+  - The bump commit subject carries `[run <run id>]`; a re-run of the same
+    dispatch finds its tag by that and reuses it, never computing `n+1`.
+  - Publish is re-runnable: existing draft reused, already published is a
+    no-op.
+
+## release-plz configuration
+
+- release-plz 0.4.3 and `release-plz/action` v0.5.148 (commit `66b324fd`),
+  the latest releases at the time of writing.
+- `publish = false` in `Cargo.toml` (the crate is not on crates.io).
+  `git_only = true` is kept: verified locally that without it release-plz
+  silently skips a `publish = false` package.
+  With it, the version comes from tags and nothing is published.
+- Tag `vX.Y.Z` (`git_tag_name`).
+  The baseline is the highest tag matching `^v(\d+\.\d+\.\d+)$` over all
+  tags, so rc tags such as `v0.1.19-rc.1` are ignored; verified: the baseline
+  resolves to `v0.1.18`.
+- `release_always = true`: releases are manual, so release the version in
+  `Cargo.toml` that has no tag.
+  `false` would require the newest commit on `main` to be the release PR merge.
+- `release_commits`: `feat`, `fix`, `type!:`, or a `BREAKING CHANGE:` footer.
+  Verified locally: `refactor!:` and a `chore:` with a footer both bump to
+  0.2.0; a lone `chore:` does not.
+  release-plz only counts commits that touch package files.
+- Changelog: keeps the `## X.Y.Z (date)` / `### Features` / `### Fixes`
+  format.
+  `header = "# Changelog\n"` (the file gets that header, added in this PR) and
+  `trim = false` produce clean spacing; an empty header leaves a blank first
+  line.
+  Verified on a throwaway clone: entries prepend correctly, the header is not
+  duplicated.
+  Breaking commits with `!` are listed under "Breaking changes"; a footer-only
+  breaking commit still appears under its type heading (the `body` parser did
+  not take effect).
+- Release notes: `parse-changelog` extracts the section for the new heading
+  format (verified for `0.2.0` and `0.1.18`).
+  Assumption: release-plz uses the same parser for the release body.
+  A dry-run `release-plz release` ran without error but does not print the body.
+
+## Not verified
+
+- No workflow was dispatched; no release, draft, or prerelease was created.
+- Untested: release-plz pushes the tag for a draft release, the
+  upload/undraft sequence on a real draft, the prerelease install and tag push.
+- `actionlint` is unavailable here (download denied); workflows parsed with
+  `yq`, `run` blocks checked with `bash -n` and `shellcheck -S warning`.
+
+## Open
+
+- `Prepare release` runs each need a manual approval (`action_required`); no
+  token-free way around it.

@@ -1,0 +1,47 @@
+name: Prepare release
+
+# Manual. Run on `main` to open or update the release PR (version bump and
+# changelog, from Conventional Commits) with `release-plz release-pr`.
+# Releases are never started automatically.
+#
+# The PR is created with GITHUB_TOKEN, so its `pull_request` runs wait in
+# `action_required` until someone approves them. They also go stale after later
+# pushes to `main`; per the release-plz docs, close and reopen the PR to rerun
+# them. Approve the runs, check the required checks pass, then review and merge.
+# After merging, run release.yml on `main`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Refuse other branches
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Dispatch this on main."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

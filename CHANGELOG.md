@@ -1,3 +1,5 @@
+# Changelog
+
 ## 0.1.18 (2026-11-01)
 
 ### Features
