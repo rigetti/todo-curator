@@ -120,14 +120,24 @@ Nothing releases automatically on a push.
    It opens or updates a release PR (version bump and changelog) from the
    Conventional Commits (`feat:`, `fix:`, or breaking `!`) since the last
    release.
-2. The PR is created by `GITHUB_TOKEN`, so its `pull_request` runs wait in
-   `action_required`: approve them in the Actions tab.
-   They go stale after later pushes to `main`; close and reopen the PR to rerun
-   them.
-   Then review and merge it.
-3. Run the `Release` workflow on `main`.
-   It tags the merged commit, creates a draft release, builds the binaries,
-   attaches them, and only then publishes the release.
+2. Close and reopen the release PR.
+   Events caused by `GITHUB_TOKEN` start no workflow runs (except
+   `workflow_dispatch` and `repository_dispatch`), so the PR has no checks
+   until it is reopened; `ci.yml` runs on `reopened`.
+   The required-checks ruleset is strict, so repeat this after any later push to
+   `main`.
+   Runs held in `action_required` were observed for a push to an existing PR
+   branch (PR #54), not for a newly opened release PR; approve them if they
+   appear.
+   Then review and merge.
+3. Run the `Release` workflow on `main` immediately after merging.
+   It tags, creates a draft release, builds the binaries, attaches them, and
+   only then publishes the release.
+   release-plz tags the release PR's commit only for a merge-commit merge.
+   For a squash or rebase merge it tags whatever `main` is at dispatch time, so
+   anything that landed after the merge is released too and is missing from
+   `CHANGELOG.md`, which is generated when the PR is opened or updated.
+   `Release` refuses a prerelease version in `Cargo.toml`.
    If it fails midway, run it again: it reuses the tag and the draft.
 
 For a build of unmerged work, run `Prepare prerelease` on a branch.

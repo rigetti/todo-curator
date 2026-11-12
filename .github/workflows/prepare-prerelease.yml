@@ -27,6 +27,11 @@ on:
 permissions:
   contents: read
 
+# Two dispatches on one branch must not compute the same number.
+concurrency:
+  group: prepare-prerelease-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   RELEASE_PLZ_VERSION: "0.4.3"
   TAG_RE: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
@@ -89,6 +94,14 @@ jobs:
             echo "Reusing ${existing} from an earlier attempt of this run."
             tag="${existing}"
           else
+            # Cargo.toml ahead of the latest release means a release PR was merged
+            # but not released, or this is a release PR branch.
+            current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
+            if ! git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
+              echo "::error::Cargo.toml is at ${current}, which has no release tag: a release PR is merged but not released, or this branch carries a release PR. Dispatch the Release workflow on main, or release through the release PR; a prerelease needs a version that is already released."
+              exit 1
+            fi
+
             # The next stable version, from the commits since the last release.
             # No changelog: a prerelease does not touch it.
             release-plz update --no-changelog
@@ -102,6 +115,10 @@ jobs:
             last="$(git tag -l "v${base}-${label}.*" | sed -E 's/.*\.([0-9]+)$/\1/' | sort -n | tail -1)"
             version="${base}-${label}.$(( ${last:--1} + 1 ))"
             tag="v${version}"
+            if [[ ! "${tag}" =~ ${TAG_RE} ]]; then
+              echo "::error::'${tag}' is not a valid version tag."
+              exit 1
+            fi
 
             sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${version}\"/" Cargo.toml
             cargo update --workspace

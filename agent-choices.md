@@ -16,13 +16,27 @@ Decisions fixed by the user:
 ## Workflows
 
 - `prepare-release.yml` (dispatch on `main`): `release-plz release-pr`.
-  The PR's `pull_request` runs wait in `action_required` (PR made by
-  `GITHUB_TOKEN`) and go stale after later pushes to `main`; close and reopen
-  the PR, per the release-plz docs.
+  Events from `GITHUB_TOKEN` start no runs (except `workflow_dispatch` and
+  `repository_dispatch`), so the primary step is to close and reopen the
+  release PR (`ci.yml` uses default `pull_request` types, which include
+  `reopened`).
+  The strict ruleset means a PR behind `main` needs this again after any later
+  push to `main`.
+  Held `action_required` runs were observed only for a push to an existing PR
+  branch (PR #54), not for a newly opened release PR; no claim either way for
+  new PRs.
 - `release.yml` (dispatch on `main`, after merging the release PR): releases
   the version in `Cargo.toml`.
   - Validates the tag against a strict SemVer regex (no leading zeros).
   - Refuses a version that is already a published (non-draft) release.
+  - Refuses a prerelease version in `Cargo.toml` (safer default: it is almost
+    certainly a leaked bump).
+    The fallback `gh release create` still passes `--prerelease` when the
+    version has a suffix, matching release-plz's `git_release_type = "auto"`.
+  - Dispatch right after merging: release-plz tags the release PR commit only
+    for merge-commit merges. For squash or rebase merges it tags `main` at
+    dispatch time, so later commits are released too and are missing from
+    `CHANGELOG.md`.
   - Tag missing: `release-plz release` creates tag and draft.
     Tag present: reused, and it must be an ancestor of `main`.
     Draft missing: created with `gh release create --draft --verify-tag` and
@@ -33,7 +47,13 @@ Decisions fixed by the user:
 - `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
   from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
   computed from existing tags.
-  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`.
+  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`; the final tag is validated
+    before `git push`.
+  - A `concurrency` group per repository and branch (no cancel) keeps two
+    dispatches from computing the same number.
+  - Refuses, with an accurate message, when `Cargo.toml` has no release tag
+    (release PR merged but not released, or a release PR branch).
+    Simulated locally: triggers at 0.1.19 without `v0.1.19`, passes with it.
   - The bump commit subject carries `[run <run id>]`; a re-run of the same
     dispatch finds its tag by that and reuses it, never computing `n+1`.
   - Publish is re-runnable: existing draft reused, already published is a
@@ -81,7 +101,12 @@ Decisions fixed by the user:
 - `actionlint` is unavailable here (download denied); workflows parsed with
   `yq`, `run` blocks checked with `bash -n` and `shellcheck -S warning`.
 
+## Deferred (out of scope here)
+
+- Restricting the release workflows to an environment limited to `main`.
+- Checksum-verifying the release-plz tarball download in `prepare-prerelease.yml`.
+
 ## Open
 
-- `Prepare release` runs each need a manual approval (`action_required`); no
+- The release PR needs a close and reopen for checks; there is no
   token-free way around it.

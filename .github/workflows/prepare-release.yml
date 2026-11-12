@@ -4,11 +4,19 @@ name: Prepare release
 # changelog, from Conventional Commits) with `release-plz release-pr`.
 # Releases are never started automatically.
 #
-# The PR is created with GITHUB_TOKEN, so its `pull_request` runs wait in
-# `action_required` until someone approves them. They also go stale after later
-# pushes to `main`; per the release-plz docs, close and reopen the PR to rerun
-# them. Approve the runs, check the required checks pass, then review and merge.
-# After merging, run release.yml on `main`.
+# Events caused by GITHUB_TOKEN create no workflow runs (except
+# `workflow_dispatch` and `repository_dispatch`), so the release PR gets no
+# `pull_request` checks on its own. Close and reopen the PR: that starts the
+# runs on its current head (`ci.yml` uses the default `pull_request` types,
+# which include `reopened`). The strict required-checks ruleset means a PR that
+# is behind `main` needs this again after any later push to `main`.
+#
+# Separately, runs held in `action_required` have been observed for a push to an
+# existing PR branch (PR #54); that has not been observed for a newly opened
+# release PR, so approve held runs if any appear.
+#
+# Then check the required checks pass, review, and merge.
+# After merging, run release.yml on `main` immediately.
 on:
   workflow_dispatch:
 

@@ -2,13 +2,14 @@ name: Release
 
 # Manual. Run on `main` after the release PR (prepare-release.yml) is merged.
 # Releases the version in Cargo.toml: `release-plz release` tags the commit and
-# creates a draft GitHub release, `build` compiles the binaries from the tag,
+# creates a draft GitHub release (with a squash or rebase merge it tags whatever
+# `main` is now, not the release PR commit, so run this right after merging), `build` compiles the binaries from the tag,
 # and `publish` attaches them and only then undrafts the release, so a release
 # is never visible without the binaries that make it installable.
 #
 # Safe to run again after a failure: an existing tag is reused, a missing draft
 # is created, and uploads overwrite. It refuses a version that is already a
-# published release.
+# published release, and a prerelease version in Cargo.toml.
 on:
   workflow_dispatch:
 
@@ -58,6 +59,12 @@ jobs:
             echo "::error::'${tag}' is not a valid version tag."
             exit 1
           fi
+          # Safer default: a prerelease version on main is almost certainly a
+          # leaked prerelease bump, not an intended release.
+          if [[ "${version}" == *-* ]]; then
+            echo "::error::Cargo.toml has the prerelease version ${version}; refusing to release it from main. Set a stable version first."
+            exit 1
+          fi
 
           if out="$(gh release view "${tag}" --repo "${REPO}" --json isDraft -q .isDraft 2>/dev/null)" \
              && [[ "${out}" == "false" ]]; then
@@ -103,7 +110,12 @@ jobs:
             echo "Release ${TAG} exists."
           else
             awk -v v="${VERSION}" '/^## /{p=($2==v); next} p' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
-            gh release create "${TAG}" --repo "${REPO}" --verify-tag --draft \
+            # Match release-plz's own draft (`git_release_type = "auto"`).
+            pre=()
+            if [[ "${VERSION}" == *-* ]]; then
+              pre=(--prerelease)
+            fi
+            gh release create "${TAG}" --repo "${REPO}" --verify-tag --draft "${pre[@]}" \
               --title "${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
           fi
 
