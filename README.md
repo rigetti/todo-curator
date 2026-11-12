@@ -141,8 +141,8 @@ Nothing releases automatically on a push.
    For a squash or rebase merge it tags whatever `main` is at dispatch time, so
    anything that landed after the merge is released too and is missing from
    `CHANGELOG.md`, which is generated when the PR is opened or updated.
-   `Release` refuses a prerelease version in `Cargo.toml`.
    If it fails midway, run it again: it reuses the tag and the draft.
+   If it reports a tag without a release, delete the tag and run it again.
 
 For a build of unmerged work, run `Prepare prerelease` on a branch.
 It pushes a tag only; nothing lands on the branch.

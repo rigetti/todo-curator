@@ -7,9 +7,8 @@ name: Release
 # and `publish` attaches them and only then undrafts the release, so a release
 # is never visible without the binaries that make it installable.
 #
-# Safe to run again after a failure: an existing tag is reused, a missing draft
-# is created, and uploads overwrite. It refuses a version that is already a
-# published release, and a prerelease version in Cargo.toml.
+# Safe to run again after a failure: an existing tag and draft are reused, and
+# uploads overwrite. `publish` refuses to modify a release that is not a draft.
 on:
   workflow_dispatch:
 
@@ -46,11 +45,11 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
 
-      - name: Determine the tag and refuse a published release
+      # The tag is needed even when release-plz creates nothing: re-running
+      # this job after release-plz tagged finds the tag and skips release-plz,
+      # whose output then lists no release.
+      - name: Determine the tag
         id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
@@ -59,30 +58,12 @@ jobs:
             echo "::error::'${tag}' is not a valid version tag."
             exit 1
           fi
-          # Safer default: a prerelease version on main is almost certainly a
-          # leaked prerelease bump, not an intended release.
-          if [[ "${version}" == *-* ]]; then
-            echo "::error::Cargo.toml has the prerelease version ${version}; refusing to release it from main. Set a stable version first."
-            exit 1
-          fi
-
-          if out="$(gh release view "${tag}" --repo "${REPO}" --json isDraft -q .isDraft 2>/dev/null)" \
-             && [[ "${out}" == "false" ]]; then
-            echo "::error::${tag} is already a published release; merge a release PR with a new version first."
-            exit 1
-          fi
-
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            if ! git merge-base --is-ancestor "refs/tags/${tag}" HEAD; then
-              echo "::error::${tag} exists but is not an ancestor of main."
-              exit 1
-            fi
             echo "exists=true" >> "${GITHUB_OUTPUT}"
           else
             echo "exists=false" >> "${GITHUB_OUTPUT}"
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Tag and create the draft release
         if: steps.version.outputs.exists == 'false'
@@ -92,37 +73,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # Covers a tag whose release was never created, and checks release-plz
-      # did what was asked.
-      - name: Ensure the draft release exists
+      # Fails early and clearly if release-plz did not push the tag for its
+      # draft (a draft release alone creates no tag), or if a tag exists
+      # without a release (release-plz failed after tagging, or a hand-pushed
+      # tag): `build` and `publish` need both.
+      - name: Check the tag and release exist
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           if ! gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
             echo "::error::release-plz did not create ${TAG}."
             exit 1
           fi
-          if gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            echo "Release ${TAG} exists."
-          else
-            # Headings are `## [X.Y.Z](compare-url) - date` (release-plz) or
-            # `## X.Y.Z (date)` (older, knope): compare the bare version.
-            awk -v v="${VERSION}" '/^## /{h=$2; sub(/^\[/, "", h); sub(/\].*$/, "", h); p=(h==v); next} p' \
-              CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
-            if [[ ! -s "${RUNNER_TEMP}/notes.md" ]]; then
-              echo "::warning::No CHANGELOG.md section found for ${VERSION}; the release notes are empty."
-            fi
-            # Match release-plz's own draft (`git_release_type = "auto"`).
-            pre=()
-            if [[ "${VERSION}" == *-* ]]; then
-              pre=(--prerelease)
-            fi
-            gh release create "${TAG}" --repo "${REPO}" --verify-tag --draft "${pre[@]}" \
-              --title "${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
+          if ! gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "::error::${TAG} exists without a release; delete the tag and dispatch this workflow again."
+            exit 1
           fi
 
   build:

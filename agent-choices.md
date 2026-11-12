@@ -34,19 +34,18 @@ Decisions fixed by the user:
 - `release.yml` (dispatch on `main`, after merging the release PR): releases
   the version in `Cargo.toml`.
   - Validates the tag against a strict SemVer regex (no leading zeros).
-  - Refuses a version that is already a published (non-draft) release.
-  - Refuses a prerelease version in `Cargo.toml` (safer default: it is almost
-    certainly a leaked bump).
-    The fallback `gh release create` still passes `--prerelease` when the
-    version has a suffix, matching release-plz's `git_release_type = "auto"`.
   - Dispatch right after merging: release-plz tags the release PR commit only
     for merge-commit merges. For squash or rebase merges it tags `main` at
     dispatch time, so later commits are released too and are missing from
     `CHANGELOG.md`.
   - Tag missing: `release-plz release` creates tag and draft.
-    Tag present: reused, and it must be an ancestor of `main`.
-    Draft missing: created with `gh release create --draft --verify-tag` and
-    the changelog section as notes.
+    Tag present: reused, and release-plz is skipped.
+    Tag present without a release: fails, asking to delete the tag and
+    dispatch again (no fallback release creation).
+  - Simplified at the user's request: no early refusal of an already
+    published version (`publish` still refuses a non-draft, after the builds),
+    no refusal of a prerelease version in `Cargo.toml`, and no check that an
+    existing tag is an ancestor of `main`.
   - `build` from the tag; `publish` requires a draft, then
     `gh release upload --clobber` and `gh release edit --draft=false`.
   - Re-running after a failure is the recovery path (no `tag` input).
@@ -62,6 +61,10 @@ Decisions fixed by the user:
     Simulated locally: triggers at 0.1.19 without `v0.1.19`, passes with it.
   - The bump commit subject carries `[run <run id>]`; a re-run of the same
     dispatch finds its tag by that and reuses it, never computing `n+1`.
+  - The `sed` plus `cargo update` bump is kept instead of
+    `release-plz set-version`: tried locally (0.4.3), `set-version` also
+    renames the newest `CHANGELOG.md` heading (`## 0.1.18` became
+    `## 0.1.19-rc.1`), mislabeling the old entry in the tagged tree.
   - Publish is re-runnable: existing draft reused, already published is a
     no-op.
 
@@ -108,14 +111,8 @@ Decisions fixed by the user:
   but leaves no blank line before the first old entry, so this PR seeds
   `CHANGELOG.md` with the default header and an `## [Unreleased]` line; with
   that, spacing is clean (verified).
-- Release-notes fallback in `release.yml` (`gh release create` when the draft
-  is missing): awk compares the bare version of each `## ` heading, in either
-  format.
-  Verified on release-plz output (`0.1.19`) and old entries (`0.1.18`,
-  `0.1.17`, `0.1.1`): exact match, so `0.1.1` cannot grab `0.1.18`;
-  `Unreleased` and unknown versions give empty notes, and the workflow warns.
-  The draft that release-plz itself creates takes its body from the changelog
-  in release-plz's own way (not observable in a dry run).
+- The draft that release-plz creates takes its body from the changelog in
+  release-plz's own way (not observable in a dry run).
 
 ## Not verified
 
