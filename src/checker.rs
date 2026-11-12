@@ -159,8 +159,9 @@ impl GitlabAuth {
         Ok(Some(Self { kind, token }))
     }
 
-    /// Select the auth scheme on a builder created with this token.
-    fn configure(&self, builder: &mut gitlab::GitlabBuilder) {
+    /// Build a GitLab client for `host` that authenticates with this token and scheme.
+    async fn build(self, host: &str) -> Result<AsyncGitlab> {
+        let mut builder = gitlab::GitlabBuilder::new(host, self.token);
         match self.kind {
             GitlabAuthKind::Pat => {}
             GitlabAuthKind::OAuth2 => {
@@ -170,6 +171,11 @@ impl GitlabAuth {
                 builder.job_token();
             }
         }
+
+        builder
+            .build_async()
+            .await
+            .context("Failed to initialize GitLab client")
     }
 }
 
@@ -375,14 +381,7 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        let mut builder = gitlab::GitlabBuilder::new(Self::normalized_gitlab_host(), &auth.token);
-        auth.configure(&mut builder);
-        let client = builder
-            .build_async()
-            .await
-            .context("Failed to initialize GitLab client")?;
-
-        Ok(Some(client))
+        Ok(Some(auth.build(&Self::normalized_gitlab_host()).await?))
     }
 
     pub fn check_auth(&self) -> Result<()> {
