@@ -123,15 +123,16 @@ Nothing releases automatically on a push.
    For example, a history of only `chore(deps)` lockfile bumps still opens a
    patch-bump PR (verified), and no new commits opens none.
    In 0.x, a breaking change bumps the minor version, anything else the patch.
-2. Close and reopen the release PR.
-   Events caused by `GITHUB_TOKEN` start no workflow runs (except
-   `workflow_dispatch` and `repository_dispatch`), so the PR has no checks
-   until it is reopened; `ci.yml` runs on `reopened`.
-   The required-checks ruleset is strict, so repeat this after any later push to
-   `main`.
-   Runs held in `action_required` were observed for a push to an existing PR
-   branch (PR #54), not for a newly opened release PR; approve them if they
-   appear.
+2. Approve the release PR's workflow runs.
+   Because release-plz opens and updates the PR with `GITHUB_TOKEN`,
+   its `pull_request` runs wait in `action_required`
+   until a maintainer approves them in the Actions tab
+   ("Approve and run" on the PR or the run).
+   Each push by release-plz needs a new approval.
+   If no runs appear, close and reopen the PR instead; `ci.yml` runs on `reopened`.
+   The required-checks ruleset is strict, so after any later push to `main`,
+   either click "Update branch" on the PR, or dispatch `Prepare release` again
+   and approve the new runs.
    Then review and merge.
 3. Run the `Release` workflow on `main` immediately after merging.
    It tags, creates a draft release, builds the binaries, attaches them, and

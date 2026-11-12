@@ -16,15 +16,21 @@ Decisions fixed by the user:
 ## Workflows
 
 - `prepare-release.yml` (dispatch on `main`): `release-plz release-pr`.
-  Events from `GITHUB_TOKEN` start no runs (except `workflow_dispatch` and
-  `repository_dispatch`), so the primary step is to close and reopen the
-  release PR (`ci.yml` uses default `pull_request` types, which include
-  `reopened`).
-  The strict ruleset means a PR behind `main` needs this again after any later
-  push to `main`.
-  Held `action_required` runs were observed only for a push to an existing PR
-  branch (PR #54), not for a newly opened release PR; no claim either way for
-  new PRs.
+  The primary step after it is to approve the PR's held runs.
+  Verified in a public scratch repository with this repository's settings
+  (approval required for first-time contributors; Actions may create PRs):
+  a PR opened with `GITHUB_TOKEN` gets a `pull_request` run in
+  `action_required`, approving it runs it to completion,
+  and the next `GITHUB_TOKEN` push to that branch is held again.
+  PR #54 showed the same for a push.
+  This contradicts GitHub's documented rule that `GITHUB_TOKEN` events start no
+  runs; the first-time-contributor approval policy is the likely reason
+  (`github-actions[bot]` has no merged commits), but that is not verified.
+  Close and reopen remains the documented fallback
+  (`ci.yml` uses default `pull_request` types, which include `reopened`).
+  The strict ruleset means a PR behind `main` needs fresh checks after any
+  later push to `main`: "Update branch" (a user push) or a new dispatch plus
+  approval.
 - `release.yml` (dispatch on `main`, after merging the release PR): releases
   the version in `Cargo.toml`.
   - Validates the tag against a strict SemVer regex (no leading zeros).
@@ -126,5 +132,5 @@ Decisions fixed by the user:
 
 ## Open
 
-- The release PR needs a close and reopen for checks; there is no
-  token-free way around it.
+- The release PR's checks need a maintainer's approval on every release-plz
+  push; there is no token-free way around it.
