@@ -320,15 +320,28 @@ impl StatusChecker {
     ///
     /// A missing `GITLAB_TOKEN_TYPE` means `pat`, except when the only token available
     /// is `CI_JOB_TOKEN` (see `gitlab_token`), which means `job`.
-    /// An unrecognized value is an error.
+    /// An unrecognized value is an error,
+    /// as is an explicit non-`job` type with `CI_JOB_TOKEN` as the only token:
+    /// an explicit type means a token of that type was expected but is missing.
     fn gitlab_auth_kind() -> Result<GitlabAuthKind> {
+        let only_ci_job_token =
+            Self::explicit_gitlab_token().is_none() && Self::env_var("CI_JOB_TOKEN").is_some();
+
         if let Some(value) =
             Self::env_var("GITLAB_TOKEN_TYPE").or_else(|| Self::env_var("GL_TOKEN_TYPE"))
         {
-            return value.parse();
+            let kind: GitlabAuthKind = value.parse()?;
+            if only_ci_job_token && kind != GitlabAuthKind::Job {
+                anyhow::bail!(
+                    "GITLAB_TOKEN_TYPE is {value:?}, but no GITLAB_TOKEN (or GL_TOKEN) is set \
+                     and only CI_JOB_TOKEN is available. \
+                     Set GITLAB_TOKEN, or set GITLAB_TOKEN_TYPE=job to use the CI job token."
+                );
+            }
+            return Ok(kind);
         }
 
-        if Self::explicit_gitlab_token().is_none() && Self::env_var("CI_JOB_TOKEN").is_some() {
+        if only_ci_job_token {
             Ok(GitlabAuthKind::Job)
         } else {
             Ok(GitlabAuthKind::Pat)
@@ -992,6 +1005,28 @@ mod tests {
     fn env_unknown_token_type_is_an_error() {
         let vars = [("GITLAB_TOKEN", "t"), ("GITLAB_TOKEN_TYPE", "jbo")];
         assert!(with_env(&vars, StatusChecker::gitlab_auth_kind).is_err());
+    }
+
+    #[test]
+    fn env_explicit_non_job_type_with_only_ci_job_token_is_an_error() {
+        for ty in ["pat", "oauth2"] {
+            let vars = [("GITLAB_TOKEN_TYPE", ty), ("CI_JOB_TOKEN", "j")];
+            let err = with_env(&vars, StatusChecker::gitlab_auth_kind)
+                .expect_err(ty)
+                .to_string();
+            assert!(err.contains("CI_JOB_TOKEN"), "{ty}: {err}");
+            assert!(err.contains("GITLAB_TOKEN"), "{ty}: {err}");
+        }
+    }
+
+    #[test]
+    fn env_explicit_non_job_type_with_explicit_token_ignores_ci_job_token() {
+        let vars = [
+            ("GITLAB_TOKEN", "t"),
+            ("GITLAB_TOKEN_TYPE", "pat"),
+            ("CI_JOB_TOKEN", "j"),
+        ];
+        assert_eq!(kind(&vars), GitlabAuthKind::Pat);
     }
 
     #[test]
