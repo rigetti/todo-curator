@@ -35,10 +35,6 @@ jobs:
         include:
           - name: github
             features: test-integration-github
-          - name: gitlab
-            features: test-integration-gitlab
-          - name: combined
-            features: test-integration-github,test-integration-gitlab
     uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.4.10
     with:
       ref: ${{ github.event.pull_request.head.sha }}
@@ -50,4 +46,3 @@ jobs:
         --features ${{ matrix.features }} --no-fail-fast
     secrets:
       github-api-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
-      gitlab-api-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}

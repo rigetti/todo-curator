@@ -4,6 +4,7 @@ use gitlab::api::projects::{issues, merge_requests};
 use gitlab::api::AsyncQuery;
 use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -34,16 +35,36 @@ impl ProjectDetection {
     }
 }
 
+/// Issue state as returned by the GitLab REST API.
+///
+/// `gitlab` only offers query-filter enums for this, which do not implement `Deserialize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum IssueState {
+    Opened,
+    Closed,
+}
+
+/// Merge request state as returned by the GitLab REST API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum MergeRequestState {
+    Opened,
+    Closed,
+    Locked,
+    Merged,
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabIssue {
     title: String,
-    state: gitlab::webhooks::IssueState,
+    state: IssueState,
 }
 
 #[derive(Debug, Deserialize)]
 struct GitLabMergeRequest {
     title: String,
-    state: gitlab::webhooks::MergeRequestState,
+    state: MergeRequestState,
     description: Option<String>,
 }
 
@@ -62,6 +83,105 @@ pub struct NotFoundReference {
 pub struct CheckResult {
     pub closed: Vec<ClosedReference>,
     pub not_found: Vec<NotFoundReference>,
+}
+
+/// How a GitLab token is presented to the API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitlabAuthKind {
+    /// `PRIVATE-TOKEN` header.
+    Pat,
+    /// `Authorization: Bearer` header.
+    OAuth2,
+    /// `JOB-TOKEN` header (CI job token).
+    Job,
+}
+
+impl std::str::FromStr for GitlabAuthKind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pat" => Ok(Self::Pat),
+            "oauth" | "oauth2" | "bearer" => Ok(Self::OAuth2),
+            "job" => Ok(Self::Job),
+            other => anyhow::bail!(
+                "Unknown Gitlab token type {other:?}; expected one of: pat, oauth2 (oauth, bearer), job"
+            ),
+        }
+    }
+}
+
+/// GitLab credentials read from the environment.
+#[derive(Debug, Clone)]
+struct GitlabAuth {
+    kind: GitlabAuthKind,
+    token: SecretString,
+}
+
+impl GitlabAuth {
+    /// Read the GitLab token and auth scheme from the environment,
+    /// or `None` if no token is set.
+    ///
+    /// The token is `GITLAB_TOKEN`, else `GL_TOKEN`, else `CI_JOB_TOKEN`.
+    /// The scheme is `GITLAB_TOKEN_TYPE` (or `GL_TOKEN_TYPE`).
+    /// A missing type means `pat`,
+    /// except when the only token is `CI_JOB_TOKEN`, which means `job`.
+    /// An unrecognized type is an error,
+    /// as is an explicit non-`job` type with `CI_JOB_TOKEN` as the only token:
+    /// an explicit type means a token of that type was expected but is missing.
+    fn from_env() -> Result<Option<Self>> {
+        let env_var = StatusChecker::env_var;
+
+        let (token, only_ci_job_token) =
+            match env_var("GITLAB_TOKEN").or_else(|| env_var("GL_TOKEN")) {
+                Some(token) => (token, false),
+                None => match env_var("CI_JOB_TOKEN") {
+                    Some(token) => (token, true),
+                    None => return Ok(None),
+                },
+            };
+
+        let kind = match env_var("GITLAB_TOKEN_TYPE").or_else(|| env_var("GL_TOKEN_TYPE")) {
+            Some(value) => {
+                let kind: GitlabAuthKind = value.parse()?;
+                if only_ci_job_token && kind != GitlabAuthKind::Job {
+                    anyhow::bail!(
+                        "Explicit GitLab token type is {value:?}, but GITLAB_TOKEN (or GL_TOKEN) is not set or is empty \
+                         and only CI_JOB_TOKEN is available. \
+                         Set GITLAB_TOKEN, or set GITLAB_TOKEN_TYPE=job to use the CI job token."
+                    );
+                }
+                kind
+            }
+            None if only_ci_job_token => GitlabAuthKind::Job,
+            None => GitlabAuthKind::Pat,
+        };
+
+        Ok(Some(Self {
+            kind,
+            token: token.into(),
+        }))
+    }
+
+    /// Build a GitLab client for `host` that authenticates with this token and scheme.
+    async fn build(self, host: &str) -> Result<AsyncGitlab> {
+        // `gitlab` takes the token only as a plain `String`.
+        let mut builder = gitlab::GitlabBuilder::new(host, self.token.expose_secret());
+        match self.kind {
+            GitlabAuthKind::Pat => {}
+            GitlabAuthKind::OAuth2 => {
+                builder.oauth2_token();
+            }
+            GitlabAuthKind::Job => {
+                builder.job_token();
+            }
+        }
+
+        builder
+            .build_async()
+            .await
+            .context("Failed to initialize GitLab client")
+    }
 }
 
 pub struct StatusChecker {
@@ -142,13 +262,13 @@ impl StatusChecker {
 
     async fn init_clients() -> Result<(Option<Octocrab>, Option<AsyncGitlab>, bool, bool)> {
         let github_token = Self::github_token();
-        let gitlab_token = Self::gitlab_token();
+        let gitlab_auth = GitlabAuth::from_env()?;
 
         let github_token_present = github_token.is_some();
-        let gitlab_token_present = gitlab_token.is_some();
+        let gitlab_token_present = gitlab_auth.is_some();
 
         let github_client = Self::init_github_client(github_token)?;
-        let gitlab_client = Self::init_gitlab_client(gitlab_token).await?;
+        let gitlab_client = Self::init_gitlab_client(gitlab_auth).await?;
 
         Ok((
             github_client,
@@ -170,12 +290,12 @@ impl StatusChecker {
             anyhow::bail!("Failed to initialize GitHub client");
         }
 
-        let gitlab_token = Self::gitlab_token();
-        if gitlab_token.is_none() {
+        let gitlab_auth = GitlabAuth::from_env().context("Failed to initialize GitLab client")?;
+        if gitlab_auth.is_none() {
             anyhow::bail!("GitLab auth not configured: set GITLAB_TOKEN or GL_TOKEN");
         }
 
-        let gitlab_client = Self::init_gitlab_client(gitlab_token)
+        let gitlab_client = Self::init_gitlab_client(gitlab_auth)
             .await
             .context("Failed to initialize GitLab client")?;
         if gitlab_client.is_none() {
@@ -201,15 +321,13 @@ impl StatusChecker {
         Some(trimmed.to_string())
     }
 
-    fn github_token() -> Option<String> {
-        Self::env_var("GITHUB_TOKEN").or_else(|| Self::env_var("GH_TOKEN"))
+    fn github_token() -> Option<SecretString> {
+        Self::env_var("GITHUB_TOKEN")
+            .or_else(|| Self::env_var("GH_TOKEN"))
+            .map(SecretString::from)
     }
 
-    fn gitlab_token() -> Option<String> {
-        Self::env_var("GITLAB_TOKEN").or_else(|| Self::env_var("GL_TOKEN"))
-    }
-
-    fn init_github_client(token: Option<String>) -> Result<Option<Octocrab>> {
+    fn init_github_client(token: Option<SecretString>) -> Result<Option<Octocrab>> {
         let Some(token) = token else {
             return Ok(None);
         };
@@ -265,39 +383,12 @@ impl StatusChecker {
             .to_string()
     }
 
-    fn gitlab_token_type() -> String {
-        Self::env_var("GITLAB_TOKEN_TYPE")
-            .or_else(|| Self::env_var("GL_TOKEN_TYPE"))
-            .unwrap_or_else(|| "pat".to_string())
-            .to_ascii_lowercase()
-    }
-
-    async fn build_gitlab_client(
-        host: &str,
-        token: String,
-        token_type: &str,
-    ) -> Result<AsyncGitlab> {
-        let mut builder = gitlab::GitlabBuilder::new(host, token);
-        if matches!(token_type, "oauth" | "oauth2" | "bearer") {
-            builder.oauth2_token();
-        }
-
-        builder
-            .build_async()
-            .await
-            .context("Failed to initialize GitLab client")
-    }
-
-    async fn init_gitlab_client(token: Option<String>) -> Result<Option<AsyncGitlab>> {
-        let Some(token) = token else {
+    async fn init_gitlab_client(auth: Option<GitlabAuth>) -> Result<Option<AsyncGitlab>> {
+        let Some(auth) = auth else {
             return Ok(None);
         };
 
-        let gitlab_host = Self::normalized_gitlab_host();
-        let token_type = Self::gitlab_token_type();
-        let client = Self::build_gitlab_client(&gitlab_host, token, &token_type).await?;
-
-        Ok(Some(client))
+        Ok(Some(auth.build(&Self::normalized_gitlab_host()).await?))
     }
 
     pub fn check_auth(&self) -> Result<()> {
@@ -427,7 +518,7 @@ impl StatusChecker {
             }
         };
 
-        if issue.state == gitlab::webhooks::IssueState::Closed {
+        if issue.state == IssueState::Closed {
             Ok(Some(ClosedReference {
                 reference: reference.clone(), // Preserves file_path and line_number from original
                 title: issue.title,
@@ -509,7 +600,7 @@ impl StatusChecker {
             Err(_) => return Ok(None),
         };
 
-        if mr.state != gitlab::webhooks::MergeRequestState::Opened {
+        if mr.state != MergeRequestState::Opened {
             Ok(Some(ClosedReference {
                 reference: reference.clone(),
                 title: mr.title,
@@ -848,6 +939,152 @@ impl StatusChecker {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Run `f` with exactly the given environment variables set.
+    #[allow(clippy::result_large_err)] // `figment::Error` is dictated by `Jail`'s API.
+    fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        let mut out = None;
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            for (k, v) in vars {
+                jail.set_env(k, v);
+            }
+            out = Some(f());
+            Ok(())
+        });
+        out.unwrap()
+    }
+
+    fn auth(vars: &[(&str, &str)]) -> Option<GitlabAuth> {
+        with_env(vars, GitlabAuth::from_env).unwrap()
+    }
+
+    fn kind(vars: &[(&str, &str)]) -> GitlabAuthKind {
+        auth(vars).expect("a GitLab token").kind
+    }
+
+    fn token(vars: &[(&str, &str)]) -> Option<String> {
+        auth(vars).map(|auth| auth.token.expose_secret().to_owned())
+    }
+
+    #[test]
+    fn auth_debug_output_hides_token() {
+        let auth = auth(&[("GITLAB_TOKEN", "glpat-very-secret")]).expect("a GitLab token");
+        let debug = format!("{auth:?}");
+        assert!(!debug.contains("glpat-very-secret"), "{debug}");
+    }
+
+    #[test]
+    fn kind_parses_known_names_case_insensitively() {
+        for (name, kind) in [
+            ("pat", GitlabAuthKind::Pat),
+            ("PAT", GitlabAuthKind::Pat),
+            ("oauth", GitlabAuthKind::OAuth2),
+            ("oauth2", GitlabAuthKind::OAuth2),
+            ("Bearer", GitlabAuthKind::OAuth2),
+            ("job", GitlabAuthKind::Job),
+        ] {
+            assert_eq!(name.parse::<GitlabAuthKind>().unwrap(), kind, "{name}");
+        }
+    }
+
+    #[test]
+    fn kind_rejects_unknown_names() {
+        assert!("jbo".parse::<GitlabAuthKind>().is_err());
+    }
+
+    #[test]
+    fn env_token_type_job_selects_job() {
+        let vars = [("GITLAB_TOKEN", "t"), ("GITLAB_TOKEN_TYPE", "job")];
+        assert_eq!(kind(&vars), GitlabAuthKind::Job);
+    }
+
+    #[test]
+    fn env_token_type_is_case_insensitive_and_has_gl_alias() {
+        let vars = [("GL_TOKEN", "t"), ("GL_TOKEN_TYPE", "JOB")];
+        assert_eq!(kind(&vars), GitlabAuthKind::Job);
+    }
+
+    #[test]
+    fn env_missing_or_blank_type_means_pat() {
+        assert_eq!(kind(&[("GITLAB_TOKEN", "t")]), GitlabAuthKind::Pat);
+        let vars = [("GITLAB_TOKEN", "t"), ("GITLAB_TOKEN_TYPE", " ")];
+        assert_eq!(kind(&vars), GitlabAuthKind::Pat);
+    }
+
+    #[test]
+    fn env_oauth_aliases_select_oauth2() {
+        for ty in ["oauth", "oauth2", "bearer"] {
+            let vars = [("GITLAB_TOKEN", "t"), ("GITLAB_TOKEN_TYPE", ty)];
+            assert_eq!(kind(&vars), GitlabAuthKind::OAuth2, "{ty}");
+        }
+    }
+
+    #[test]
+    fn env_unknown_token_type_is_an_error() {
+        let vars = [("GITLAB_TOKEN", "t"), ("GITLAB_TOKEN_TYPE", "jbo")];
+        assert!(with_env(&vars, GitlabAuth::from_env).is_err());
+    }
+
+    #[test]
+    fn env_explicit_non_job_type_with_only_ci_job_token_is_an_error() {
+        for ty in ["pat", "oauth2"] {
+            let vars = [("GITLAB_TOKEN_TYPE", ty), ("CI_JOB_TOKEN", "j")];
+            let err = with_env(&vars, GitlabAuth::from_env)
+                .expect_err(ty)
+                .to_string();
+            assert!(err.contains("CI_JOB_TOKEN"), "{ty}: {err}");
+            assert!(err.contains("GITLAB_TOKEN"), "{ty}: {err}");
+        }
+    }
+
+    #[test]
+    fn env_explicit_non_job_type_with_explicit_token_ignores_ci_job_token() {
+        let vars = [
+            ("GITLAB_TOKEN", "t"),
+            ("GITLAB_TOKEN_TYPE", "pat"),
+            ("CI_JOB_TOKEN", "j"),
+        ];
+        assert_eq!(kind(&vars), GitlabAuthKind::Pat);
+    }
+
+    #[test]
+    fn env_ci_job_token_alone_selects_job() {
+        assert_eq!(kind(&[("CI_JOB_TOKEN", "j")]), GitlabAuthKind::Job);
+    }
+
+    #[test]
+    fn env_explicit_token_keeps_pat_even_with_ci_job_token() {
+        let vars = [("GITLAB_TOKEN", "t"), ("CI_JOB_TOKEN", "j")];
+        assert_eq!(kind(&vars), GitlabAuthKind::Pat);
+    }
+
+    #[test]
+    fn env_blank_token_with_ci_job_token_selects_job() {
+        let vars = [("GITLAB_TOKEN", "  "), ("CI_JOB_TOKEN", "j")];
+        assert_eq!(kind(&vars), GitlabAuthKind::Job);
+    }
+
+    #[test]
+    fn env_token_prefers_explicit_over_ci_job_token() {
+        let vars = [("GITLAB_TOKEN", "t"), ("CI_JOB_TOKEN", "j")];
+        assert_eq!(token(&vars).as_deref(), Some("t"));
+        let vars = [("GL_TOKEN", "g"), ("CI_JOB_TOKEN", "j")];
+        assert_eq!(token(&vars).as_deref(), Some("g"));
+    }
+
+    #[test]
+    fn env_token_falls_back_to_ci_job_token() {
+        assert_eq!(token(&[("CI_JOB_TOKEN", "j")]).as_deref(), Some("j"));
+        let vars = [("GITLAB_TOKEN", "  "), ("CI_JOB_TOKEN", "j")];
+        assert_eq!(token(&vars).as_deref(), Some("j"));
+    }
+
+    #[test]
+    fn env_token_absent_without_any_token_var() {
+        assert_eq!(token(&[]), None);
+        assert_eq!(token(&[("GITLAB_TOKEN_TYPE", "job")]), None);
+    }
 
     #[test]
     fn work_item_query_targets_group_and_iid() {

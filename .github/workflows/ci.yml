@@ -89,7 +89,6 @@ jobs:
           # authenticated even where the repository secrets are unavailable —
           # GitHub's unauthenticated API allows as few as 60 requests an hour.
           github-token: ${{ secrets.TODO_CURATOR_GH_TOKEN || github.token }}
-          gitlab-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
 
   # The credentialed API integration tests. This job only covers branches in
   # this repository, where the code is already trusted; pull requests from forks
@@ -109,10 +108,6 @@ jobs:
         include:
           - name: github
             features: test-integration-github
-          - name: gitlab
-            features: test-integration-gitlab
-          - name: combined
-            features: test-integration-github,test-integration-gitlab
     uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-integration-tests.yml@v0.4.10
     with:
       cache-key: api-integration
@@ -121,7 +116,11 @@ jobs:
         --features ${{ matrix.features }} --no-fail-fast
     secrets:
       github-api-token: ${{ secrets.TODO_CURATOR_GH_TOKEN }}
-      gitlab-api-token: ${{ secrets.TODO_CURATOR_GL_TOKEN }}
+
+  # The GitLab integration tests do not run here:
+  # we do not want to use a long-lived GitLab PAT for testing.
+  #
+  # TODO(#55): validate the GitLab integration tests before merge again.
 
   # The single required status check. Everything above may legitimately skip —
   # forks have no secrets, Dependabot gets none either — and a skipped check

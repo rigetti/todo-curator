@@ -10,6 +10,18 @@ If you have `glab` and `gh` installed and authenticated,
 you can use `scripts/autoauth-todo-curator.sh` to run `todo-curator` (if it's on the `PATH`),
 which will automatically use `glab` and `gh` for authentication.
 
+GitLab auth scheme is selected by `GITLAB_TOKEN_TYPE` (or `GL_TOKEN_TYPE`):
+
+- `pat` (default): personal access token, sent as `PRIVATE-TOKEN`.
+- `oauth2` (aliases `oauth`, `bearer`): OAuth2 token, sent as `Authorization: Bearer`.
+- `job`: GitLab CI job token, sent as `JOB-TOKEN`.
+
+Unknown values are an error.
+Inside GitLab CI, set `GITLAB_TOKEN=$CI_JOB_TOKEN` and `GITLAB_TOKEN_TYPE=job`.
+If neither `GITLAB_TOKEN` nor `GL_TOKEN` is set and `GITLAB_TOKEN_TYPE` is unset,
+`CI_JOB_TOKEN` is used automatically in `job` mode.
+A job token can only read what the CI job token allowlist permits.
+
 For local development, you can source `auth-setup.sh` before running the API integration tests.
 The tests for each forge are not run unless corresponding feature flag,
 `test-integration-github` or `test-integration-gitlab`, is enabled.
