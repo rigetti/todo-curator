@@ -121,7 +121,7 @@ Nothing releases automatically on a push.
    Conventional Commits since the last release, with release-plz's defaults:
    any commit that changes a packaged file counts, whatever its type.
    For example, a history of only `chore(deps)` lockfile bumps still opens a
-   patch-bump PR (verified), and no new commits opens none.
+   patch-bump PR, and no new commits opens none.
    In 0.x, a breaking change bumps the minor version, anything else the patch.
 2. Approve the release PR's workflow runs.
    Because release-plz opens and updates the PR with `GITHUB_TOKEN`,

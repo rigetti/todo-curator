@@ -16,17 +16,12 @@ Decisions fixed by the user:
 ## Workflows
 
 - `prepare-release.yml` (dispatch on `main`): `release-plz release-pr`.
-  The primary step after it is to approve the PR's held runs.
-  Verified in a public scratch repository with this repository's settings
-  (approval required for first-time contributors; Actions may create PRs):
-  a PR opened with `GITHUB_TOKEN` gets a `pull_request` run in
-  `action_required`, approving it runs it to completion,
-  and the next `GITHUB_TOKEN` push to that branch is held again.
-  PR #54 showed the same for a push.
-  This contradicts GitHub's documented rule that `GITHUB_TOKEN` events start no
-  runs; the first-time-contributor approval policy is the likely reason
-  (`github-actions[bot]` has no merged commits), but that is not verified.
-  Close and reopen remains the documented fallback
+  The PR is opened and updated with `GITHUB_TOKEN`, so its `pull_request` runs
+  wait in `action_required` until a maintainer approves them;
+  every push by release-plz needs a new approval.
+  This depends on the repository requiring approval for first-time
+  contributors; GitHub's documentation says `GITHUB_TOKEN` events start no runs.
+  Close and reopen is the fallback
   (`ci.yml` uses default `pull_request` types, which include `reopened`).
   The strict ruleset means a PR behind `main` needs fresh checks after any
   later push to `main`: "Update branch" (a user push) or a new dispatch plus
@@ -41,11 +36,10 @@ Decisions fixed by the user:
   - Tag missing: `release-plz release` creates tag and draft.
     Tag present: reused, and release-plz is skipped.
     Tag present without a release: fails, asking to delete the tag and
-    dispatch again (no fallback release creation).
-  - Simplified at the user's request: no early refusal of an already
-    published version (`publish` still refuses a non-draft, after the builds),
-    no refusal of a prerelease version in `Cargo.toml`, and no check that an
-    existing tag is an ancestor of `main`.
+    dispatch again.
+  - No early refusal of an already published version (`publish` refuses a
+    non-draft, after the builds), no refusal of a prerelease version in
+    `Cargo.toml`, and no check that an existing tag is an ancestor of `main`.
   - `build` from the tag; `publish` requires a draft, then
     `gh release upload --clobber` and `gh release edit --draft=false`.
   - Re-running after a failure is the recovery path (no `tag` input).
@@ -56,73 +50,48 @@ Decisions fixed by the user:
     before `git push`.
   - A `concurrency` group per repository and branch (no cancel) keeps two
     dispatches from computing the same number.
-  - Refuses, with an accurate message, when `Cargo.toml` has no release tag
+  - Refuses when `Cargo.toml` has no release tag
     (release PR merged but not released, or a release PR branch).
-    Simulated locally: triggers at 0.1.19 without `v0.1.19`, passes with it.
   - The bump commit subject carries `[run <run id>]`; a re-run of the same
     dispatch finds its tag by that and reuses it, never computing `n+1`.
-  - The `sed` plus `cargo update` bump is kept instead of
-    `release-plz set-version`: tried locally (0.4.3), `set-version` also
-    renames the newest `CHANGELOG.md` heading (`## 0.1.18` became
-    `## 0.1.19-rc.1`), mislabeling the old entry in the tagged tree.
+  - The version is bumped with `sed` plus `cargo update`, not
+    `release-plz set-version`, which also renames the newest `CHANGELOG.md`
+    heading and would mislabel the previous release's entry.
   - Publish is re-runnable: existing draft reused, already published is a
     no-op.
 
 ## release-plz configuration
 
-- release-plz 0.4.3 and `release-plz/action` v0.5.148 (commit `66b324fd`),
-  the latest releases at the time of writing.
+- release-plz 0.4.3 and `release-plz/action` v0.5.148 (commit `66b324fd`).
 - `publish = false` in `Cargo.toml` (the crate is not on crates.io).
-  `git_only = true` is kept: verified locally that without it release-plz
-  silently skips a `publish = false` package.
+  `git_only = true` is needed: without it, release-plz skips a
+  `publish = false` package.
   With it, the version comes from tags and nothing is published.
 - Defaults for everything else: no `release_commits`, no `[changelog]`, no
   `git_tag_name`.
   Only settings the manual `GITHUB_TOKEN` flow needs are set: `git_only`,
   `git_release_draft`, `git_release_type`, `release_always`, `pr_labels`.
-- Tag: the default for a single package is `v{{ version }}`; verified with a
-  `release-plz release --dry-run` ("creation of tag 'v0.1.19'").
-  The baseline is the highest tag matching `^v(\d+\.\d+\.\d+)$` over all
-  tags, so rc tags such as `v0.1.19-rc.1` are ignored; verified: the baseline
-  resolves to `v0.1.18`.
+- Tag: the default for a single package, `v{{ version }}`.
+  The baseline is the highest tag matching `^v(\d+\.\d+\.\d+)$`, so rc tags
+  such as `v0.1.19-rc.1` are ignored.
 - `release_always = true`: releases are manual, so release the version in
   `Cargo.toml` that has no tag.
   `false` would require the newest commit on `main` to be the release PR merge.
 - What counts as a change (default `release_commits`): every commit that
   touches a file `cargo package` would include, whatever its type.
   This repo sets no `include`/`exclude`, so `.github/`, `release-plz.toml`,
-  and lockfile changes count.
-  Verified in throwaway clones (release-plz 0.4.3):
-  - A history of only `chore(deps)` commits that change `Cargo.toml` or
-    `Cargo.lock`: `release-plz update` (what `release-pr` runs) proposes a
-    patch bump (0.1.18 to 0.1.19) with the commits under "### Other".
-    So dispatching `Prepare release` on such a history opens a patch-bump PR,
-    not nothing.
-  - A commit that changes only `.github/workflows/ci.yml`: also a patch bump.
-  - No commits since the last tag: "already up to date", no PR.
-  - In 0.x, a `feat` gives a patch bump and a breaking change (`!`) a minor
-    bump (0.1.19 to 0.2.0).
+  and lockfile changes count: a history of only `chore(deps)` or workflow
+  commits gives a patch bump.
+  In 0.x, a `feat` gives a patch bump and a breaking change (`!`) a minor bump.
 - Changelog: release-plz's default format (Keep a Changelog headings such as
   `### Added`, `### Fixed`, `### Other`; `## [X.Y.Z](compare-url) - date`).
   Older knope entries (`## X.Y.Z (date)`) are left as they are.
-  Verified: new entries are prepended under the header and above the old
-  entries, and nothing is duplicated or rewritten across two runs.
-  Without a header, release-plz inserts its default header on the first run
-  but leaves no blank line before the first old entry, so this PR seeds
-  `CHANGELOG.md` with the default header and an `## [Unreleased]` line; with
-  that, spacing is clean (verified).
-- The draft that release-plz creates takes its body from the changelog in
-  release-plz's own way (not observable in a dry run).
+  New entries are prepended under the header and above the old entries.
+  `CHANGELOG.md` is seeded with the default header and an `## [Unreleased]`
+  line; without them, release-plz leaves no blank line before the first old
+  entry.
 
-## Not verified
-
-- No workflow was dispatched; no release, draft, or prerelease was created.
-- Untested: release-plz pushes the tag for a draft release, the
-  upload/undraft sequence on a real draft, the prerelease install and tag push.
-- `actionlint` is unavailable here (download denied); workflows parsed with
-  `yq`, `run` blocks checked with `bash -n` and `shellcheck -S warning`.
-
-## Deferred (out of scope here)
+## Deferred
 
 - Restricting the release workflows to an environment limited to `main`.
 - Checksum-verifying the release-plz tarball download in `prepare-prerelease.yml`.
