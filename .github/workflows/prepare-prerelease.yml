@@ -107,7 +107,7 @@ jobs:
             release-plz update --no-changelog
             base="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
             if git diff --quiet -- Cargo.toml; then
-              echo "::error::No feat, fix, or breaking commit since the last release; release-plz would not bump the version."
+              echo "::error::No commit since the last release changes the package, so release-plz would not bump the version (it reports "already up to date"); there is nothing to prerelease."
               exit 1
             fi
 

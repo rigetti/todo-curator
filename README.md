@@ -118,8 +118,11 @@ Nothing releases automatically on a push.
 
 1. Run the `Prepare release` workflow on `main`.
    It opens or updates a release PR (version bump and changelog) from the
-   Conventional Commits (`feat:`, `fix:`, or breaking `!`) since the last
-   release.
+   Conventional Commits since the last release, with release-plz's defaults:
+   any commit that changes a packaged file counts, whatever its type.
+   For example, a history of only `chore(deps)` lockfile bumps still opens a
+   patch-bump PR (verified), and no new commits opens none.
+   In 0.x, a breaking change bumps the minor version, anything else the patch.
 2. Close and reopen the release PR.
    Events caused by `GITHUB_TOKEN` start no workflow runs (except
    `workflow_dispatch` and `repository_dispatch`), so the PR has no checks

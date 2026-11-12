@@ -67,31 +67,49 @@ Decisions fixed by the user:
   `git_only = true` is kept: verified locally that without it release-plz
   silently skips a `publish = false` package.
   With it, the version comes from tags and nothing is published.
-- Tag `vX.Y.Z` (`git_tag_name`).
+- Defaults for everything else: no `release_commits`, no `[changelog]`, no
+  `git_tag_name`.
+  Only settings the manual `GITHUB_TOKEN` flow needs are set: `git_only`,
+  `git_release_draft`, `git_release_type`, `release_always`, `pr_labels`.
+- Tag: the default for a single package is `v{{ version }}`; verified with a
+  `release-plz release --dry-run` ("creation of tag 'v0.1.19'").
   The baseline is the highest tag matching `^v(\d+\.\d+\.\d+)$` over all
   tags, so rc tags such as `v0.1.19-rc.1` are ignored; verified: the baseline
   resolves to `v0.1.18`.
 - `release_always = true`: releases are manual, so release the version in
   `Cargo.toml` that has no tag.
   `false` would require the newest commit on `main` to be the release PR merge.
-- `release_commits`: `feat`, `fix`, `type!:`, or a `BREAKING CHANGE:` footer.
-  Verified locally: `refactor!:` and a `chore:` with a footer both bump to
-  0.2.0; a lone `chore:` does not.
-  release-plz only counts commits that touch package files.
-- Changelog: keeps the `## X.Y.Z (date)` / `### Features` / `### Fixes`
+- What counts as a change (default `release_commits`): every commit that
+  touches a file `cargo package` would include, whatever its type.
+  This repo sets no `include`/`exclude`, so `.github/`, `release-plz.toml`,
+  and lockfile changes count.
+  Verified in throwaway clones (release-plz 0.4.3):
+  - A history of only `chore(deps)` commits that change `Cargo.toml` or
+    `Cargo.lock`: `release-plz update` (what `release-pr` runs) proposes a
+    patch bump (0.1.18 to 0.1.19) with the commits under "### Other".
+    So dispatching `Prepare release` on such a history opens a patch-bump PR,
+    not nothing.
+  - A commit that changes only `.github/workflows/ci.yml`: also a patch bump.
+  - No commits since the last tag: "already up to date", no PR.
+  - In 0.x, a `feat` gives a patch bump and a breaking change (`!`) a minor
+    bump (0.1.19 to 0.2.0).
+- Changelog: release-plz's default format (Keep a Changelog headings such as
+  `### Added`, `### Fixed`, `### Other`; `## [X.Y.Z](compare-url) - date`).
+  Older knope entries (`## X.Y.Z (date)`) are left as they are.
+  Verified: new entries are prepended under the header and above the old
+  entries, and nothing is duplicated or rewritten across two runs.
+  Without a header, release-plz inserts its default header on the first run
+  but leaves no blank line before the first old entry, so this PR seeds
+  `CHANGELOG.md` with the default header and an `## [Unreleased]` line; with
+  that, spacing is clean (verified).
+- Release-notes fallback in `release.yml` (`gh release create` when the draft
+  is missing): awk compares the bare version of each `## ` heading, in either
   format.
-  `header = "# Changelog\n"` (the file gets that header, added in this PR) and
-  `trim = false` produce clean spacing; an empty header leaves a blank first
-  line.
-  Verified on a throwaway clone: entries prepend correctly, the header is not
-  duplicated.
-  Breaking commits with `!` are listed under "Breaking changes"; a footer-only
-  breaking commit still appears under its type heading (the `body` parser did
-  not take effect).
-- Release notes: `parse-changelog` extracts the section for the new heading
-  format (verified for `0.2.0` and `0.1.18`).
-  Assumption: release-plz uses the same parser for the release body.
-  A dry-run `release-plz release` ran without error but does not print the body.
+  Verified on release-plz output (`0.1.19`) and old entries (`0.1.18`,
+  `0.1.17`, `0.1.1`): exact match, so `0.1.1` cannot grab `0.1.18`;
+  `Unreleased` and unknown versions give empty notes, and the workflow warns.
+  The draft that release-plz itself creates takes its body from the changelog
+  in release-plz's own way (not observable in a dry run).
 
 ## Not verified
 

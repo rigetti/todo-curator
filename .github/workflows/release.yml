@@ -109,7 +109,13 @@ jobs:
           if gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             echo "Release ${TAG} exists."
           else
-            awk -v v="${VERSION}" '/^## /{p=($2==v); next} p' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+            # Headings are `## [X.Y.Z](compare-url) - date` (release-plz) or
+            # `## X.Y.Z (date)` (older, knope): compare the bare version.
+            awk -v v="${VERSION}" '/^## /{h=$2; sub(/^\[/, "", h); sub(/\].*$/, "", h); p=(h==v); next} p' \
+              CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+            if [[ ! -s "${RUNNER_TEMP}/notes.md" ]]; then
+              echo "::warning::No CHANGELOG.md section found for ${VERSION}; the release notes are empty."
+            fi
             # Match release-plz's own draft (`git_release_type = "auto"`).
             pre=()
             if [[ "${VERSION}" == *-* ]]; then
