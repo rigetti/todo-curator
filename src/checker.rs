@@ -4,6 +4,7 @@ use gitlab::api::projects::{issues, merge_requests};
 use gitlab::api::AsyncQuery;
 use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -111,10 +112,10 @@ impl std::str::FromStr for GitlabAuthKind {
 }
 
 /// GitLab credentials read from the environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct GitlabAuth {
     kind: GitlabAuthKind,
-    token: String,
+    token: SecretString,
 }
 
 impl GitlabAuth {
@@ -156,12 +157,16 @@ impl GitlabAuth {
             None => GitlabAuthKind::Pat,
         };
 
-        Ok(Some(Self { kind, token }))
+        Ok(Some(Self {
+            kind,
+            token: token.into(),
+        }))
     }
 
     /// Build a GitLab client for `host` that authenticates with this token and scheme.
     async fn build(self, host: &str) -> Result<AsyncGitlab> {
-        let mut builder = gitlab::GitlabBuilder::new(host, self.token);
+        // `gitlab` takes the token only as a plain `String`.
+        let mut builder = gitlab::GitlabBuilder::new(host, self.token.expose_secret());
         match self.kind {
             GitlabAuthKind::Pat => {}
             GitlabAuthKind::OAuth2 => {
@@ -316,11 +321,13 @@ impl StatusChecker {
         Some(trimmed.to_string())
     }
 
-    fn github_token() -> Option<String> {
-        Self::env_var("GITHUB_TOKEN").or_else(|| Self::env_var("GH_TOKEN"))
+    fn github_token() -> Option<SecretString> {
+        Self::env_var("GITHUB_TOKEN")
+            .or_else(|| Self::env_var("GH_TOKEN"))
+            .map(SecretString::from)
     }
 
-    fn init_github_client(token: Option<String>) -> Result<Option<Octocrab>> {
+    fn init_github_client(token: Option<SecretString>) -> Result<Option<Octocrab>> {
         let Some(token) = token else {
             return Ok(None);
         };
@@ -957,7 +964,14 @@ mod tests {
     }
 
     fn token(vars: &[(&str, &str)]) -> Option<String> {
-        auth(vars).map(|auth| auth.token)
+        auth(vars).map(|auth| auth.token.expose_secret().to_owned())
+    }
+
+    #[test]
+    fn auth_debug_output_hides_token() {
+        let auth = auth(&[("GITLAB_TOKEN", "glpat-very-secret")]).expect("a GitLab token");
+        let debug = format!("{auth:?}");
+        assert!(!debug.contains("glpat-very-secret"), "{debug}");
     }
 
     #[test]

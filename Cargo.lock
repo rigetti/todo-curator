@@ -3796,6 +3796,7 @@ dependencies = [
  "ignore",
  "octocrab",
  "regex",
+ "secrecy",
  "serde",
  "serde_json",
  "test-log",
