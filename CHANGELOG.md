@@ -1,3 +1,13 @@
+## 0.1.19-rc.0 (2026-11-12)
+
+### Features
+
+- support GitLab job-token
+
+### Fixes
+
+- use a single rustls crypto provider
+
 ## 0.1.18 (2026-11-01)
 
 ### Features
