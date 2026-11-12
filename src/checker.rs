@@ -105,7 +105,7 @@ impl std::str::FromStr for GitlabAuthKind {
             "oauth" | "oauth2" | "bearer" => Ok(Self::OAuth2),
             "job" => Ok(Self::Job),
             other => anyhow::bail!(
-                "Unknown GITLAB_TOKEN_TYPE {other:?}; expected one of: pat, oauth2 (oauth, bearer), job"
+                "Unknown Gitlab token type {other:?}; expected one of: pat, oauth2 (oauth, bearer), job"
             ),
         }
     }
@@ -146,7 +146,7 @@ impl GitlabAuth {
                 let kind: GitlabAuthKind = value.parse()?;
                 if only_ci_job_token && kind != GitlabAuthKind::Job {
                     anyhow::bail!(
-                        "Explicit GitLab token type is {value:?}, but no GITLAB_TOKEN (or GL_TOKEN) is set \
+                        "Explicit GitLab token type is {value:?}, but GITLAB_TOKEN (or GL_TOKEN) is not set or is empty \
                          and only CI_JOB_TOKEN is available. \
                          Set GITLAB_TOKEN, or set GITLAB_TOKEN_TYPE=job to use the CI job token."
                     );
