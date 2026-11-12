@@ -1,0 +1,194 @@
+name: Release
+
+# Releases with release-plz, using only the job's own GITHUB_TOKEN.
+#
+# 1. Every push to `main` updates the release PR (`release-pr`): version bump
+#    and changelog, from Conventional Commits.
+# 2. A maintainer merges that PR. A human push is what starts this workflow
+#    again; pushes made with GITHUB_TOKEN start no workflows.
+# 3. `release` tags the merge commit and creates the GitHub release as a draft
+#    (`git_release_draft` in release-plz.toml). `build` compiles the binaries,
+#    and `publish` attaches them and only then undrafts the release, so a
+#    release is never visible without the binaries that make it installable.
+#
+# If a run fails after `release` created the tag and draft, re-run it with the
+# `tag` input to build and publish that draft. For a release candidate cut from
+# a branch, use prepare-prerelease.yml.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Resume: build and publish the existing draft release for this tag."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    if: github.event_name == 'push' && github.repository_owner == 'rigetti'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  release:
+    if: github.repository_owner == 'rigetti'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    # Not cancelled by a newer push: that could skip a release.
+    concurrency:
+      group: release-plz-release
+      cancel-in-progress: false
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Tag and create the draft release
+        id: release-plz
+        if: inputs.tag == ''
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Empty when the merged commit was not a release PR: nothing to build.
+      - name: Determine the tag
+        id: tag
+        env:
+          RESUME_TAG: ${{ inputs.tag }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          set -euo pipefail
+          tag="${RESUME_TAG}"
+          if [[ -z "${tag}" && -n "${RELEASES}" ]]; then
+            tag="$(echo "${RELEASES}" | jq -r '.[0].tag // empty')"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Releasing: ${tag:-nothing}"
+
+  build:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runs-on: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { runs-on: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { runs-on: macos-latest, target: aarch64-apple-darwin }
+          - { runs-on: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+          persist-credentials: false
+
+      # Keep the path short: deep dependency trees overrun Windows' path limit.
+      - name: Use a short target directory
+        shell: bash
+        run: echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/t" >> "${GITHUB_ENV}"
+
+      - name: Install Rust
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup toolchain install stable --profile minimal --target "${TARGET}"
+
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-linux-musl')
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "${GITHUB_ENV}"
+
+      - name: Build
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo +stable build -p todo-curator --target "${TARGET}" --release
+
+      - name: Stage the binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          ext=""
+          if [[ "${TARGET}" == *windows* ]]; then
+            ext=".exe"
+          fi
+          cp "${CARGO_TARGET_DIR}/${TARGET}/release/todo-curator${ext}" \
+             "release/todo-curator-${TARGET}${ext}"
+          chmod +x release/*
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.target }}
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    needs: [release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Attach the binaries and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -l release
+          gh release upload "${TAG}" release/* --repo "${REPO}" --clobber
+
+          # Drafts cannot be "latest", so set it when undrafting (not for a
+          # prerelease, which cannot be either).
+          latest=(--latest)
+          if [[ "${TAG}" == *-* ]]; then
+            latest=()
+          fi
+          gh release edit "${TAG}" --repo "${REPO}" --draft=false "${latest[@]}"

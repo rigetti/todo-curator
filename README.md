@@ -114,4 +114,25 @@ If a repository's own tests or docs contain TODO-shaped text, set
 
 Reusable Rust CI and release workflows live in
 [`rigetti/qcs-gha-infrastructure`](https://github.com/rigetti/qcs-gha-infrastructure).
-This repository's own `.github/workflows/` directory is a working example.
+This repository's CI (`.github/workflows/ci.yml`) is a working example.
+Releases are inlined, see below.
+
+## Releasing
+
+Releases use [release-plz](https://release-plz.dev), configured in
+`release-plz.toml`.
+
+1. Merge Conventional Commits (`feat:`, `fix:`, or breaking `!`) to `main`.
+   `release.yml` opens or updates a release PR with the version bump and
+   changelog.
+2. The release PR is created by `GITHUB_TOKEN`, so its `pull_request` runs wait
+   in `action_required`: approve them in the Actions tab, then review and merge
+   the PR as usual.
+3. Merging starts `release.yml` again: it tags the merge commit, creates a draft
+   release, builds the binaries, attaches them, and only then publishes the
+   release.
+   If it fails midway, re-run the workflow with the `tag` input set to the new
+   tag.
+
+For a release candidate, dispatch `prepare-prerelease.yml` on a branch.
+It tags a commit that is not on any branch, so nothing lands in the branch.

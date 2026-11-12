@@ -1,0 +1,40 @@
+# See https://release-plz.dev/docs/config.
+[workspace]
+# The crate is not on crates.io: take the current version from git tags and
+# never run `cargo publish`.
+git_only = true
+
+# `release-plz release` creates the tag and the GitHub release as a draft.
+# release.yml uploads the binaries and only then publishes the draft, so a
+# release is never visible without the binaries that make it installable.
+git_release_draft = true
+git_release_type = "auto"
+git_tag_name = "v{{ version }}"
+
+# Release only when the release PR is merged, not on every push to `main`.
+release_always = false
+
+# Like knope, only `feat`, `fix`, and breaking changes make a release.
+release_commits = '^(feat|fix)(\(.+\))?!?:'
+
+# The release PR needs the required checks; see README's release section.
+pr_labels = ["release"]
+
+[changelog]
+protect_breaking_commits = true
+tag_pattern = "v[0-9].*"
+header = ""
+commit_parsers = [
+    { message = '^feat', group = "Features" },
+    { message = '^fix', group = "Fixes" },
+    { message = '.*', skip = true },
+]
+body = """
+## {{ version }} ({{ timestamp | date(format="%Y-%m-%d") }})
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {% if commit.breaking %}**breaking** {% endif %}{{ commit.message }}
+{% endfor %}
+{% endfor %}
+"""
