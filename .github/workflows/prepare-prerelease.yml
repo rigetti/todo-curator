@@ -13,11 +13,36 @@ on:
 
 jobs:
   prerelease:
+    permissions:
+      contents: write
     uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-prerelease.yml@v0.4.10
     with:
       bin: todo-curator
       prerelease-label: ${{ inputs.prerelease-label }}
     secrets:
-      # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
-      # not trigger anything downstream.
-      token: ${{ secrets.RELEASE_TOKEN }}
+      # Prefer a PAT or app token: pushes made with GITHUB_TOKEN do not trigger
+      # anything downstream. Without one, fall back to GITHUB_TOKEN; the `ci`
+      # job below then dispatches CI for the bump commit explicitly.
+      token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+  # `workflow_dispatch` is one of the few events that GITHUB_TOKEN can trigger,
+  # so this restores the CI run that the bump commit's push would not start.
+  ci:
+    needs: prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch CI for the prerelease commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          HAVE_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${HAVE_RELEASE_TOKEN}" == "true" ]]; then
+            echo "RELEASE_TOKEN pushed the commit, so CI started on its own."
+            exit 0
+          fi
+          gh workflow run ci.yml --repo "${REPO}" --ref "${BRANCH}"
