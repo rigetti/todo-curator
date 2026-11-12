@@ -146,7 +146,7 @@ impl GitlabAuth {
                 let kind: GitlabAuthKind = value.parse()?;
                 if only_ci_job_token && kind != GitlabAuthKind::Job {
                     anyhow::bail!(
-                        "GITLAB_TOKEN_TYPE is {value:?}, but no GITLAB_TOKEN (or GL_TOKEN) is set \
+                        "Explicit GitLab token type is {value:?}, but no GITLAB_TOKEN (or GL_TOKEN) is set \
                          and only CI_JOB_TOKEN is available. \
                          Set GITLAB_TOKEN, or set GITLAB_TOKEN_TYPE=job to use the CI job token."
                     );
