@@ -65,7 +65,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE_LABEL: ${{ inputs.prerelease-label }}
-          ACTOR: ${{ github.triggering_actor }}
+          GIT_AUTHOR_NAME: ${{ github.triggering_actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.triggering_actor }}@users.noreply.github.com
+          GIT_COMMITTER_NAME: ${{ github.triggering_actor }}
+          GIT_COMMITTER_EMAIL: ${{ github.triggering_actor }}@users.noreply.github.com
         run: |
           set -euo pipefail
           label="${PRERELEASE_LABEL}"
@@ -110,8 +113,6 @@ jobs:
 
             # A local commit on top of the branch head, so the tagged tree's
             # Cargo.toml matches the binary's version. Only the tag is pushed.
-            git config user.name "${ACTOR}"
-            git config user.email "${ACTOR}@users.noreply.github.com"
             git commit -am "chore: prepare release ${tag} [run ${GITHUB_RUN_ID}]"
             git tag "${tag}"
             git push origin "refs/tags/${tag}"
