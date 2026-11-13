@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       prerelease-label:
-        description: "Prerelease label; defaults to 'rc'."
+        description: "Prerelease label"
         required: false
-        default: ""
+        default: rc
 
 permissions:
   contents: read
@@ -71,7 +71,7 @@ jobs:
           ACTOR: ${{ github.triggering_actor }}
         run: |
           set -euo pipefail
-          label="${PRERELEASE_LABEL:-rc}"
+          label="${PRERELEASE_LABEL}"
           if [[ ! "${label}" =~ ^[A-Za-z][0-9A-Za-z-]*$ ]]; then
             echo "::error::Invalid prerelease label '${label}': use letters, digits, and hyphens, starting with a letter."
             exit 1
