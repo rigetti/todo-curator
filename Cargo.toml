@@ -44,6 +44,9 @@ urlencoding = "2.1.3"
 http = "1"
 secrecy = "0.10"
 
+[lints]
+workspace = true
+
 [workspace.lints.clippy]
 # lint config is copied from conserv-v2, with minor adjustments
 
