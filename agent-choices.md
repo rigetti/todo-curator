@@ -28,7 +28,8 @@ Decisions fixed by the user:
   approval.
 - `release.yml` (dispatch on `main`, after merging the release PR): releases
   the version in `Cargo.toml`.
-  - Validates the tag against a strict SemVer regex (no leading zeros).
+  - No separate tag validation: `cargo metadata` rejects a `Cargo.toml`
+    version that is not valid semver.
   - Dispatch right after merging: release-plz tags the release PR commit only
     for merge-commit merges. For squash or rebase merges it tags `main` at
     dispatch time, so later commits are released too and are missing from
@@ -46,8 +47,8 @@ Decisions fixed by the user:
 - `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
   from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
   computed from existing tags.
-  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`; the final tag is validated
-    before `git push`.
+  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`; `release-plz set-version`
+    rejects a version that is not valid semver, before anything is pushed.
   - A `concurrency` group per repository and branch (no cancel) keeps two
     dispatches from computing the same number.
   - Refuses when `Cargo.toml` has no release tag

@@ -19,9 +19,6 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-env:
-  TAG_RE: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -54,10 +51,6 @@ jobs:
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
           tag="v${version}"
-          if [[ ! "${tag}" =~ ${TAG_RE} ]]; then
-            echo "::error::'${tag}' is not a valid version tag."
-            exit 1
-          fi
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             echo "exists=true" >> "${GITHUB_OUTPUT}"
           else
@@ -178,10 +171,6 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ ! "${TAG}" =~ ${TAG_RE} ]]; then
-            echo "::error::'${TAG}' is not a valid version tag."
-            exit 1
-          fi
           # Overwriting assets of a published release would change what users
           # already installed.
           if [[ "$(gh release view "${TAG}" --repo "${REPO}" --json isDraft -q .isDraft)" != "true" ]]; then
