@@ -5,6 +5,8 @@
 # Without this, `publish = false` in `Cargo.toml` makes release-plz skip the
 # package entirely.
 git_only = true
+# TODO(#58): use semver-checks if we publish to crates.io
+semver_check = false
 
 # `release-plz release` creates the tag and the GitHub release as a draft.
 # release.yml uploads the binaries and only then publishes the draft, so a
