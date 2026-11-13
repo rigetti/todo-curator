@@ -1,7 +1,7 @@
 use crate::todo::{TodoReference, TodoReferenceKind};
 use anyhow::{Context, Result};
 use gitlab::api::projects::{issues, merge_requests};
-use gitlab::api::AsyncQuery;
+use gitlab::api::{AsyncClient, AsyncQuery, RestClient};
 use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
 use secrecy::{ExposeSecret, SecretString};
@@ -232,20 +232,16 @@ impl StatusChecker {
 
         // Check host to determine GitHub vs GitLab
         match url.host() {
-            Some("github.com") => {
-                if let Some(path) = url.path_argument_safe() {
+            Some("github.com") => url
+                .path_argument_safe()
+                .map_or(ProjectDetection::None, |path| {
                     ProjectDetection::GitHub(Self::normalize_project_path(&path.to_string()))
-                } else {
-                    ProjectDetection::None
-                }
-            }
-            Some("gitlab.com") => {
-                if let Some(path) = url.path_argument_safe() {
+                }),
+            Some("gitlab.com") => url
+                .path_argument_safe()
+                .map_or(ProjectDetection::None, |path| {
                     ProjectDetection::GitLab(Self::normalize_project_path(&path.to_string()))
-                } else {
-                    ProjectDetection::None
-                }
-            }
+                }),
             _ => ProjectDetection::None,
         }
     }
@@ -628,9 +624,8 @@ impl StatusChecker {
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
-        let pr = match client.pulls(owner, repo_name).get(u64::from(number)).await {
-            Ok(pr) => pr,
-            Err(_) => return Ok(None),
+        let Ok(pr) = client.pulls(owner, repo_name).get(u64::from(number)).await else {
+            return Ok(None);
         };
 
         if pr.state != Some(octocrab::models::IssueState::Open) {
@@ -687,7 +682,6 @@ impl StatusChecker {
         );
 
         // Build HTTP request manually
-        use gitlab::api::{AsyncClient, RestClient};
         let url = client
             .rest_endpoint(&endpoint)
             .context("Failed to build epic endpoint URL")?;
@@ -748,7 +742,6 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        use gitlab::api::{AsyncClient, RestClient};
         let url = client
             .instance_endpoint("api/graphql")
             .context("Failed to build GraphQL endpoint URL")?;

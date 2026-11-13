@@ -221,7 +221,7 @@ impl TodoReference {
 }
 
 type ExtractorFn =
-    Box<dyn Fn(&regex::Captures, &str, &str, u64) -> Option<TodoReference> + Send + Sync>;
+    Box<dyn Fn(&regex::Captures<'_>, &str, &str, u64) -> Option<TodoReference> + Send + Sync>;
 
 pub struct TodoExtractor {
     todo_ref_pattern: Regex,
@@ -279,7 +279,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^#(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
                             TodoReferenceKind::GitLabIssue {
@@ -306,7 +306,7 @@ impl TodoExtractor {
                 )
                 .unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         // `a/b#N` parses as a project issue, so only a single-segment group
@@ -337,7 +337,7 @@ impl TodoExtractor {
                 )
                 .unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
                         // `groups/...` URLs are group-level; never treat them as projects.
                         if project == "groups" || project.starts_with("groups/") {
@@ -364,7 +364,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -388,7 +388,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^github\.com/([^/]+/[^/]+)#(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -411,7 +411,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)#(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -433,7 +433,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^([a-zA-Z0-9_-]+)#(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -451,7 +451,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^!(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
                             TodoReferenceKind::GitLabMr {
@@ -474,7 +474,7 @@ impl TodoExtractor {
                 Regex::new(r"^(?:https?://)?gitlab\.com/([^/]+(?:/[^/]+)*?)/-/merge_requests/(\d+)$")
                     .unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -495,7 +495,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)!(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let project = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -518,7 +518,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/]+)/pull/(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -538,7 +538,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^(?:https?://)?github\.com/([^/]+/[^/!]+)!(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let repo = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -556,7 +556,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^&(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let number = caps.get(1)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
                             TodoReferenceKind::GitLabEpic {
@@ -579,7 +579,7 @@ impl TodoExtractor {
                 Regex::new(r"^(?:https?://)?gitlab\.com/groups/([^/]+(?:/[^/]+)*?)/-/epics/(\d+)$")
                     .unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -600,7 +600,7 @@ impl TodoExtractor {
             (
                 Regex::new(r"^([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)+)&(\d+)$").unwrap(),
                 Box::new(
-                    |caps: &regex::Captures, line: &str, file_path: &str, line_number: u64| {
+                    |caps: &regex::Captures<'_>, line: &str, file_path: &str, line_number: u64| {
                         let group = caps.get(1)?.as_str().to_string();
                         let number = caps.get(2)?.as_str().parse::<u32>().ok()?;
                         Some(TodoReference::new(
@@ -690,8 +690,8 @@ impl TodoExtractor {
                 continue;
             }
 
-            let refs = all_references.clone();
-            let viols = lint_violations.clone();
+            let refs = Arc::clone(&all_references);
+            let viols = Arc::clone(&lint_violations);
             let file_path_str = path.to_string_lossy().to_string();
 
             // Use grep-searcher to efficiently search the file
