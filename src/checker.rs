@@ -361,8 +361,8 @@ impl StatusChecker {
 
             if slash_idx.is_none_or(|idx| colon_idx < idx) {
                 if let Some(idx) = slash_idx {
-                    let after_colon = &cleaned[colon_idx + 1..idx];
-                    if after_colon.chars().all(|c| c.is_ascii_digit()) {
+                    let from_colon = &cleaned[colon_idx..idx];
+                    if from_colon.chars().skip(1).all(|c| c.is_ascii_digit()) {
                         // host:port/path
                         cleaned = &cleaned[..idx];
                     } else {
@@ -659,14 +659,12 @@ impl StatusChecker {
                         // Extract group from project path (e.g., "rigetti/qcs/services/myproject" -> "rigetti/qcs/services")
                         // Epics belong to groups, not projects, so we need to find the parent group
                         // For now, we'll try the full path minus the last component
-                        let parts: Vec<&str> = project_path.split('/').collect();
-                        if parts.len() > 1 {
-                            parts[..parts.len() - 1].join("/")
-                        } else {
+                        let Some((parent, _)) = project_path.rsplit_once('/') else {
                             anyhow::bail!(
                                 "Cannot determine group from project path: {project_path}"
                             )
-                        }
+                        };
+                        parent.to_string()
                     }
                     _ => anyhow::bail!("GitLab epic requires group path"),
                 }
@@ -819,17 +817,15 @@ impl StatusChecker {
         Ok((state.to_string(), title.to_string()))
     }
 
-    pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
-        let Some(client) = self.gitlab_client.as_ref() else {
-            return Ok(Vec::new());
-        };
-
-        // Get current branch name to find the MR
+    /// Name of the branch that `HEAD` refers to.
+    ///
+    /// Synchronous so that the non-`Send` `gix::Repository` is never held across an `.await`.
+    fn current_branch_name() -> Option<String> {
         let repo = match gix::discover(".") {
             Ok(repo) => repo,
             Err(e) => {
                 tracing::warn!(error=%e, "not in a valid git repository");
-                return Ok(Vec::new());
+                return None;
             }
         };
 
@@ -837,7 +833,7 @@ impl StatusChecker {
             Ok(head) => head,
             Err(e) => {
                 tracing::warn!(error=%e, "failed to get HEAD reference");
-                return Ok(Vec::new());
+                return None;
             }
         };
 
@@ -853,13 +849,25 @@ impl StatusChecker {
                 }
                 Ok(None) => {
                     tracing::warn!("HEAD is detached and no non-jj/keep branch points at HEAD");
-                    return Ok(Vec::new());
+                    return None;
                 }
                 Err(e) => {
                     tracing::warn!(error=%e, "failed to resolve branch name for detached HEAD");
-                    return Ok(Vec::new());
+                    return None;
                 }
             },
+        };
+
+        Some(branch)
+    }
+
+    pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let Some(branch) = Self::current_branch_name() else {
+            return Ok(Vec::new());
         };
 
         // Find MR for this branch
