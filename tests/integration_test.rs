@@ -10,9 +10,10 @@
 //! cargo test --test integration_test
 //! ```
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use todo_curator::todo::TodoReferenceKind;
+use todo_curator::todo::{TodoExtractor, TodoReference, TodoReferenceKind};
 use todo_curator::{
     check_closed_from_extraction, check_closed_references, check_invalid_from_extraction,
     checker::{ProjectDetection, StatusChecker},
@@ -109,7 +110,7 @@ fn test_todo_extraction_from_data_file() {
         .join("example_todos.txt");
 
     // Read the file content
-    let content = std::fs::read_to_string(&data_path).expect("Failed to read test data file");
+    let content = fs::read_to_string(&data_path).expect("Failed to read test data file");
 
     // Verify the file contains various TODO formats we want to test
     assert!(
@@ -137,9 +138,6 @@ fn test_todo_extraction_from_data_file() {
 /// Test that the extractor correctly parses GitLab epic formats
 #[test_log::test]
 fn test_epic_extraction() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_epic_extraction.rs");
 
@@ -281,11 +279,11 @@ fn test_directory_scanning() {
 fn test_check_invalid_skips_auth_validation() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let temp_dir = std::env::temp_dir().join("todo_curator_check_invalid_no_auth");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
 
     let test_file = temp_dir.join("bad.rs");
-    std::fs::write(&test_file, "// TODO without a reference\n").unwrap();
+    fs::write(&test_file, "// TODO without a reference\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
         .arg("check-invalid")
@@ -302,7 +300,7 @@ fn test_check_invalid_skips_auth_validation() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
 
     assert!(
         !stderr.contains("auth") && !stderr.contains("token"),
@@ -322,12 +320,12 @@ fn test_check_invalid_skips_auth_validation() {
 fn test_empty_gitlab_token_is_not_configured_auth() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let temp_dir = std::env::temp_dir().join("todo_curator_empty_gitlab_token");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
 
     // A GitHub reference, in a directory with no GitLab references at all.
     let test_file = temp_dir.join("todo.rs");
-    std::fs::write(&test_file, "// TODO github.com/rust-lang/rust#1:\n").unwrap();
+    fs::write(&test_file, "// TODO github.com/rust-lang/rust#1:\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_todo-curator"))
         .arg("check-closed")
@@ -344,7 +342,7 @@ fn test_empty_gitlab_token_is_not_configured_auth() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
 
     assert!(
         !stderr.contains("Failed to initialize GitLab client"),
@@ -355,9 +353,6 @@ fn test_empty_gitlab_token_is_not_configured_auth() {
 /// Test that FIXME markers are reported as improper TODO-like violations.
 #[test_log::test]
 fn test_extractor_reports_fixme_as_invalid_todo_like() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_extractor_fixme");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -384,17 +379,17 @@ fn test_extractor_reports_fixme_as_invalid_todo_like() {
 #[test_log::test]
 fn test_invalid_projection_includes_simplification_warnings() {
     let temp_dir = std::env::temp_dir().join("todo_curator_invalid_projection_warnings");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
     let test_file = temp_dir.join("sample.rs");
-    std::fs::write(
+    fs::write(
         &test_file,
         "// TODO https://github.com/foo/bar/issues/123:\n",
     )
     .expect("Failed to write test file");
 
     let extraction = extract_todos(&temp_dir, "").expect("Failed to extract TODOs");
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
 
     let output = check_invalid_from_extraction(&extraction, &ProjectDetection::None)
         .expect("Failed to project invalid check");
@@ -414,11 +409,11 @@ fn test_invalid_projection_includes_simplification_warnings() {
 async fn test_closed_check_ignores_lint_only_todos() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_closed_check_ignores_lints.rs");
-    std::fs::write(&test_file, "// TODO without a reference\n").expect("Failed to write test file");
+    fs::write(&test_file, "// TODO without a reference\n").expect("Failed to write test file");
 
     let result = run_closed_reference_check(test_file.clone()).await;
 
-    let _ = std::fs::remove_file(&test_file);
+    let _ = fs::remove_file(&test_file);
 
     assert!(result.closed.is_empty(), "No closed refs expected");
     assert!(result.not_found.is_empty(), "No not-found refs expected");
@@ -444,14 +439,14 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
     } else {
         "// TODO without a reference\n"
     };
-    std::fs::write(&test_file, file_content).expect("Failed to write test file");
+    fs::write(&test_file, file_content).expect("Failed to write test file");
 
     let extraction = extract_todos(&test_file, "").expect("Failed to extract TODOs");
     let checker = match StatusChecker::new().await {
         Ok(checker) => checker,
         Err(e) => {
             eprintln!("Skipping due to auth/client init issue: {e}");
-            let _ = std::fs::remove_file(&test_file);
+            let _ = fs::remove_file(&test_file);
             return;
         }
     };
@@ -463,7 +458,7 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
     let invalid = check_invalid_from_extraction(&extraction, &project_detection)
         .expect("Failed to project invalid check");
 
-    let _ = std::fs::remove_file(&test_file);
+    let _ = fs::remove_file(&test_file);
 
     closed.lint_violations.extend(invalid.lint_violations);
 
@@ -497,11 +492,11 @@ async fn test_check_all_projection_merges_closed_and_lint_errors() {
 async fn test_excluded_file_regex_skips_closed_reference_checks() {
     let temp_root = std::env::temp_dir().join("todo_curator_closed_exclude_test");
     let docs_dir = temp_root.join("docs");
-    let _ = std::fs::remove_dir_all(&temp_root);
-    std::fs::create_dir_all(&docs_dir).expect("Failed to create temp docs dir");
+    let _ = fs::remove_dir_all(&temp_root);
+    fs::create_dir_all(&docs_dir).expect("Failed to create temp docs dir");
 
     let test_file = docs_dir.join("todo-comments.md");
-    std::fs::write(
+    fs::write(
         &test_file,
         "TODO github.com/nonexistent-user-12345/nonexistent-repo-67890#99999:\n",
     )
@@ -510,7 +505,7 @@ async fn test_excluded_file_regex_skips_closed_reference_checks() {
     let result =
         run_closed_reference_check_with_excludes(temp_root.clone(), "todo-comments.md").await;
 
-    let _ = std::fs::remove_dir_all(&temp_root);
+    let _ = fs::remove_dir_all(&temp_root);
 
     assert!(
         result.closed.is_empty(),
@@ -534,12 +529,12 @@ async fn test_excluded_file_regex_skips_closed_reference_checks() {
 async fn test_performance_reference_skips_remote_checks() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("test_performance_reference.rs");
-    std::fs::write(&test_file, "// TODO performance: local-only marker\n")
+    fs::write(&test_file, "// TODO performance: local-only marker\n")
         .expect("Failed to write test file");
 
     let result = run_closed_reference_check(test_file.clone()).await;
 
-    let _ = std::fs::remove_file(&test_file);
+    let _ = fs::remove_file(&test_file);
 
     assert!(
         result.closed.is_empty(),
@@ -565,9 +560,6 @@ async fn test_performance_reference_skips_remote_checks() {
 /// Test that valid TODO patterns produce no syntax errors during extraction
 #[test_log::test]
 fn test_lint_valid_patterns() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_valid");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -615,9 +607,6 @@ fn test_lint_valid_patterns() {
 /// Test that exclude file regexes skip matching files during extraction
 #[test_log::test]
 fn test_lint_exclude_file_regexes() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_test_exclude");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -654,9 +643,6 @@ fn test_lint_exclude_file_regexes() {
 /// Test that duplicate walk entries (e.g. .gitlab-ci.yml) do not duplicate violations.
 #[test_log::test]
 fn test_lint_violations_are_deduplicated() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_lint_dedup");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -680,9 +666,6 @@ fn test_lint_violations_are_deduplicated() {
 /// Test that lowercase `todo`/`temp` require comment markers to be linted.
 #[test_log::test]
 fn test_lowercase_todo_temp_require_comment_indicator() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_lowercase_comment_gated");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -731,9 +714,6 @@ todo-item
 /// Test that extractor reports TODO lines that do not match any extraction rule.
 #[test_log::test]
 fn test_extractor_reports_incorrect_todo_syntax() {
-    use std::fs;
-    use todo_curator::todo::TodoExtractor;
-
     let temp_dir = std::env::temp_dir().join("todo_curator_extractor_invalid_todo");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -763,9 +743,6 @@ fn test_extractor_reports_incorrect_todo_syntax() {
 /// Test that multiple TODO matches on a single line are all extracted.
 #[test_log::test]
 fn test_extractor_multiple_todos_on_one_line() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir().join("todo_curator_multiple_todos_one_line");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -806,12 +783,37 @@ fn test_extractor_multiple_todos_on_one_line() {
     }
 }
 
+fn gitlab_issue(project: Option<&str>, number: u32) -> TodoReferenceKind {
+    TodoReferenceKind::GitLabIssue {
+        project: project.map(str::to_string),
+        number,
+    }
+}
+
+fn github_issue(repo: Option<&str>, number: u32) -> TodoReferenceKind {
+    TodoReferenceKind::GitHubIssueOrPr {
+        repo: repo.map(str::to_string),
+        number,
+    }
+}
+
+fn gitlab_mr(project: Option<&str>, number: u32) -> TodoReferenceKind {
+    TodoReferenceKind::GitLabMr {
+        project: project.map(str::to_string),
+        number,
+    }
+}
+
+fn gitlab_epic(group: Option<&str>, number: u32) -> TodoReferenceKind {
+    TodoReferenceKind::GitLabEpic {
+        group: group.map(str::to_string),
+        number,
+    }
+}
+
 /// Test that TODO(<ref>) form is correctly extracted as references
 #[test_log::test]
 fn test_parenthesized_todo_extraction() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir().join("todo_curator_paren_test");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -848,255 +850,57 @@ fn test_parenthesized_todo_extraction() {
         .filter(|r| r.file_path().contains("parens.rs"))
         .collect();
 
-    // Local GitLab issue
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabIssue {
-                    project: None,
-                    number: 100,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO(#100). Got: {refs:#?}"
-    );
-
-    // Cross-project GitLab issue
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabIssue {
-                    project: Some(p),
-                    number: 200,
-                    ..
-                },
-                ..
-            }
-            if p == "rigetti/qcs/magneto"
-        )),
-        "Should extract TODO(rigetti/qcs/magneto#200). Got: {refs:#?}"
-    );
-
-    // GitHub issue
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitHubIssueOrPr {
-                    repo: Some(repo),
-                    number: 300,
-                    ..
-                },
-                ..
-            }
-            if repo == "owner/repo"
-        )),
-        "Should extract TODO(github.com/owner/repo#300). Got: {refs:#?}"
-    );
-
-    // Local MR
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabMr {
-                    project: None,
-                    number: 400,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO(!400). Got: {refs:#?}"
-    );
-
-    // Cross-project MR
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabMr {
-                    project: Some(p),
-                    number: 500,
-                    ..
-                },
-                ..
-            }
-            if p == "rigetti/qcs/magneto"
-        )),
-        "Should extract TODO(rigetti/qcs/magneto!500). Got: {refs:#?}"
-    );
-
-    // Local epic
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabEpic {
-                    group: None,
-                    number: 600,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO(&600). Got: {refs:#?}"
-    );
-
-    // Epic with group
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabEpic {
-                    group: Some(g),
-                    number: 700,
-                    ..
-                },
-                ..
-            }
-            if g == "rigetti/qcs/services"
-        )),
-        "Should extract TODO(rigetti/qcs/services&700). Got: {refs:#?}"
-    );
-
-    // Local GitLab issue with spacing before parenthesized ref
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabIssue {
-                    project: None,
-                    number: 800,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO (#800). Got: {refs:#?}"
-    );
-
-    // Cross-project GitLab issue with spacing before parenthesized ref
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabIssue {
-                    project: Some(p),
-                    number: 810,
-                    ..
-                },
-                ..
-            }
-            if p == "rigetti/qcs/magneto"
-        )),
-        "Should extract TODO (rigetti/qcs/magneto#810). Got: {refs:#?}"
-    );
-
-    // GitHub issue with spacing before parenthesized ref
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitHubIssueOrPr {
-                    repo: Some(repo),
-                    number: 820,
-                    ..
-                },
-                ..
-            }
-            if repo == "owner/repo"
-        )),
-        "Should extract TODO (github.com/owner/repo#820). Got: {refs:#?}"
-    );
-
-    // Local MR with spacing before parenthesized ref
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabMr {
-                    project: None,
-                    number: 830,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO (!830). Got: {refs:#?}"
-    );
-
-    // Local epic with spacing before parenthesized ref
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabEpic {
-                    group: None,
-                    number: 840,
-                    ..
-                },
-                ..
-            }
-        )),
-        "Should extract TODO (&840). Got: {refs:#?}"
-    );
-
-    // Comma-delimited refs: local GitLab issues #7, #8, #9
-    for number in [7_u32, 8_u32, 9_u32] {
+    let expected = [
+        ("TODO(#100)", gitlab_issue(None, 100)),
+        (
+            "TODO(rigetti/qcs/magneto#200)",
+            gitlab_issue(Some("rigetti/qcs/magneto"), 200),
+        ),
+        (
+            "TODO(github.com/owner/repo#300)",
+            github_issue(Some("owner/repo"), 300),
+        ),
+        ("TODO(!400)", gitlab_mr(None, 400)),
+        (
+            "TODO(rigetti/qcs/magneto!500)",
+            gitlab_mr(Some("rigetti/qcs/magneto"), 500),
+        ),
+        ("TODO(&600)", gitlab_epic(None, 600)),
+        (
+            "TODO(rigetti/qcs/services&700)",
+            gitlab_epic(Some("rigetti/qcs/services"), 700),
+        ),
+        ("TODO (#800)", gitlab_issue(None, 800)),
+        (
+            "TODO (rigetti/qcs/magneto#810)",
+            gitlab_issue(Some("rigetti/qcs/magneto"), 810),
+        ),
+        (
+            "TODO (github.com/owner/repo#820)",
+            github_issue(Some("owner/repo"), 820),
+        ),
+        ("TODO (!830)", gitlab_mr(None, 830)),
+        ("TODO (&840)", gitlab_epic(None, 840)),
+        ("#7 from comma-delimited TODO list", gitlab_issue(None, 7)),
+        ("#8 from comma-delimited TODO list", gitlab_issue(None, 8)),
+        ("#9 from comma-delimited TODO list", gitlab_issue(None, 9)),
+        (
+            "rigetti/qcs/magneto#10 from comma-delimited TODO list",
+            gitlab_issue(Some("rigetti/qcs/magneto"), 10),
+        ),
+        (
+            "github.com/foo/bar#1 from comma-delimited TODO list",
+            github_issue(Some("foo/bar"), 1),
+        ),
+        (
+            "github.com/owner/repo#11 from comma-delimited TODO list",
+            github_issue(Some("owner/repo"), 11),
+        ),
+    ];
+    for (label, kind) in expected {
         assert!(
-            refs.iter().any(|r| matches!(
-                r,
-                TodoReference {
-                    kind: TodoReferenceKind::GitLabIssue {
-                        project: None,
-                        number: n,
-                        ..
-                    },
-                    ..
-                } if *n == number
-            )),
-            "Should extract local issue #{number} from comma-delimited TODO list. Got: {refs:#?}"
-        );
-    }
-
-    // Comma-delimited refs: GitLab rendered issue
-    assert!(
-        refs.iter().any(|r| matches!(
-            r,
-            TodoReference {
-                kind: TodoReferenceKind::GitLabIssue {
-                    project: Some(p),
-                    number: 10,
-                    ..
-                },
-                ..
-            }
-            if p == "rigetti/qcs/magneto"
-        )),
-        "Should extract rigetti/qcs/magneto#10 from comma-delimited TODO list. Got: {refs:#?}"
-    );
-
-    // Comma-delimited refs: GitHub shorthand issues
-    for (repo, number) in [("foo/bar", 1_u32), ("owner/repo", 11_u32)] {
-        assert!(
-            refs.iter().any(|r| matches!(
-                r,
-                TodoReference {
-                    kind: TodoReferenceKind::GitHubIssueOrPr {
-                        repo: Some(rp),
-                        number: n,
-                        ..
-                    },
-                    ..
-                }
-                if rp == repo && *n == number
-            )),
-            "Should extract github.com/{repo}#{number} from comma-delimited TODO list. Got: {refs:#?}"
+            refs.iter().any(|r| r.kind == kind),
+            "Should extract {label}. Got: {refs:#?}"
         );
     }
 }
@@ -1104,9 +908,6 @@ fn test_parenthesized_todo_extraction() {
 /// Test that GitLab work item URL forms are parsed as GitLab issues.
 #[test_log::test]
 fn test_gitlab_work_item_url_extraction() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir().join("todo_curator_work_items_test");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -1166,9 +967,6 @@ fn test_gitlab_work_item_url_extraction() {
 /// Test shorthand disambiguation: owner/repo#N is GitLab-style, github.com/owner/repo#N is GitHub-style.
 #[test_log::test]
 fn test_cross_project_shorthand_disambiguation() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir().join("todo_curator_cross_project_shorthand_test");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -1233,9 +1031,6 @@ fn test_cross_project_shorthand_disambiguation() {
 
 #[test_log::test]
 fn test_github_bang_reference_is_pull_request() {
-    use std::fs;
-    use todo_curator::todo::{TodoExtractor, TodoReference};
-
     let temp_dir = std::env::temp_dir().join("todo_curator_github_bang_test");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -1314,13 +1109,13 @@ fn test_usage_spec_flag_prints_spec() {
 /// Extract references from `content` written to a fresh temp directory named after `name`.
 fn extract_refs_from_content(name: &str, content: &str) -> todo_curator::todo::ExtractionResult {
     let temp_dir = std::env::temp_dir().join(format!("todo_curator_{name}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
-    std::fs::write(temp_dir.join("refs.rs"), content).unwrap();
-    let extraction = todo_curator::todo::TodoExtractor::new()
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    fs::write(temp_dir.join("refs.rs"), content).unwrap();
+    let extraction = TodoExtractor::new()
         .extract_from_directory(&temp_dir)
         .unwrap();
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
     extraction
 }
 
@@ -1328,7 +1123,7 @@ fn extract_refs_from_content(name: &str, content: &str) -> todo_curator::todo::E
 fn find_ref<'a>(
     extraction: &'a todo_curator::todo::ExtractionResult,
     original: &str,
-) -> &'a todo_curator::todo::TodoReference {
+) -> &'a TodoReference {
     extraction
         .references
         .iter()
