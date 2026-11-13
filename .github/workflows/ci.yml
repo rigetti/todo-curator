@@ -12,7 +12,8 @@ concurrency:
 
 jobs:
   rust:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@v0.4.10
+    # TODO(github.com/rigetti/qcs-gha-infrastructure#21): use a version-tag once a new one has been created
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-ci.yml@1920fe53541626e77f52a12fb2622d7a68b46fdc
     with:
       # The API integration tests live in separate jobs below, because they
       # need forge credentials, so this job does not use --all-features.
