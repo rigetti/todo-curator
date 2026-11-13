@@ -112,10 +112,7 @@ jobs:
               exit 1
             fi
 
-            # `set-version` also renames the newest CHANGELOG.md heading to the
-            # new version, which would mislabel the previous release's entry.
             release-plz set-version "${version}"
-            git checkout -- CHANGELOG.md
 
             # A local commit on top of the branch head, so the tagged tree's
             # Cargo.toml matches the binary's version. Only the tag is pushed.
