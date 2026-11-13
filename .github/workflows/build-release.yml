@@ -19,14 +19,15 @@ permissions:
   contents: read
 
 jobs:
-  # TODO(github.com/rigetti/qcs-gha-infrastructure#21): move publish into the shared
-  # repository too, once it has a release flow that needs no PAT or knope.
   build:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.4.10
+    # TODO(github.com/rigetti/qcs-gha-infrastructure#21): use a version-tag once a new one has been created
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@767eb75f1acb4c31d6861f35e8de05e83e41dbff
     with:
       bin: todo-curator
       ref: refs/tags/${{ inputs.tag }}
 
+  # TODO(github.com/rigetti/qcs-gha-infrastructure#21): use a shared `publish` action,
+  # once it has a release flow that needs no PAT or knope.
   publish:
     needs: build
     runs-on: ubuntu-latest
