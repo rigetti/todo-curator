@@ -1,23 +1,141 @@
 name: Prepare prerelease
 
 # Cuts a release candidate from the branch this is dispatched on, so it can be
-# installed and tested before merging: bump, build, publish. Dispatching on
-# main fails, since merging there releases automatically.
+# installed and tested before merging: version, build, publish. Uses only the
+# job's own GITHUB_TOKEN. Dispatching on main fails, since main releases
+# through the release PR (release.yml).
+#
+# The purpose of this flow is to let consumers use a version of the tool that
+# includes unmerged work, for example to try a branch in another repository's
+# CI before the change lands. It is not a release candidate of the next
+# release: the tag points at the branch head plus a version bump commit,
+# not at a release PR.
+#
+# release-plz has no prerelease flow of its own, so this computes the next
+# version with `release-plz update`, appends `-<label>.<n>`, and tags a commit
+# that exists only under that tag. Nothing is pushed to the branch: a bump
+# commit on the branch would merge into `main` with a prerelease version in
+# Cargo.toml, which release-plz would then release as the next version.
 on:
   workflow_dispatch:
     inputs:
       prerelease-label:
-        description: "Prerelease label; defaults to 'rc'."
+        description: "Prerelease label"
         required: false
-        default: ""
+        default: rc
+
+permissions:
+  contents: read
+
+# Two dispatches on one branch must not compute the same number.
+concurrency:
+  group: prepare-prerelease-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  prerelease:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-prerelease.yml@v0.4.10
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Refuse the default branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "::error::main releases through the release PR; dispatch this from the branch you want a release candidate for."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      # `release-plz/action` only runs `release-pr` or `release`; this needs
+      # `release-plz update`. Keep the version in step with that action's.
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: release-plz@0.4.3
+
+      - name: Bump, commit, and tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE_LABEL: ${{ inputs.prerelease-label }}
+          GIT_AUTHOR_NAME: ${{ github.triggering_actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.triggering_actor }}@users.noreply.github.com
+          GIT_COMMITTER_NAME: ${{ github.triggering_actor }}
+          GIT_COMMITTER_EMAIL: ${{ github.triggering_actor }}@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          label="${PRERELEASE_LABEL}"
+
+          # A re-run of this dispatch (same run id) reuses its tag instead of
+          # computing the next number. The run id is in the commit subject,
+          # which `%(contents:subject)` shows for a lightweight tag.
+          existing="$(git for-each-ref refs/tags --format='%(refname:short) %(contents:subject)' \
+                        | grep -F "[run ${GITHUB_RUN_ID}]" | head -1 | cut -d' ' -f1 || true)"
+          if [[ -n "${existing}" ]]; then
+            echo "Reusing ${existing} from an earlier attempt of this run."
+            tag="${existing}"
+          else
+            # Cargo.toml ahead of the latest release means a release PR was merged
+            # but not released, or this is a release PR branch.
+            current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
+            if ! git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
+              echo "::error::Cargo.toml is at ${current}, which has no release tag: a release PR is merged but not released, or this branch carries a release PR. Dispatch the Release workflow on main, or release through the release PR; a prerelease needs a base version that is already released."
+              exit 1
+            fi
+
+            # The next stable version, from the commits since the last release.
+            # No changelog: a prerelease does not touch it.
+            release-plz update --no-changelog
+            base="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
+            if git diff --quiet -- Cargo.toml; then
+              echo "::error::No commit since the last release changes the package, so release-plz would not bump the version (it reports "already up to date"); there is nothing to prerelease."
+              exit 1
+            fi
+
+            # Next free number for this base and label.
+            last="$(git tag -l "v${base}-${label}.*" | sed -E 's/.*\.([0-9]+)$/\1/' | sort -n | tail -1)"
+            version="${base}-${label}.$(( ${last:--1} + 1 ))"
+            tag="v${version}"
+
+            # Fails on a version that is not valid semver.
+            release-plz set-version "${version}"
+
+            # A local commit on top of the branch head, so the tagged tree's
+            # Cargo.toml matches the binary's version. Only the tag is pushed.
+            git commit -am "chore: prepare release ${tag} [run ${GITHUB_RUN_ID}]"
+            git tag "${tag}"
+            git push origin "refs/tags/${tag}"
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      # A draft, published by build-release.yml after the upload, so the
+      # prerelease is never visible without its binaries.
+      # An existing release is reused.
+      - name: Create the draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --repo "${REPO}" --verify-tag \
+              --draft --prerelease --title "${TAG}" \
+              --notes "Release candidate built from ${GITHUB_REF_NAME}."
+          fi
+
+  build-release:
+    needs: draft
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-release.yml
     with:
-      bin: todo-curator
-      prerelease-label: ${{ inputs.prerelease-label }}
-    secrets:
-      # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
-      # not trigger anything downstream.
-      token: ${{ secrets.RELEASE_TOKEN }}
+      tag: ${{ needs.draft.outputs.tag }}

@@ -1,24 +1,51 @@
 name: Prepare release
 
-# Dry-runs a release on every pull request and releases automatically when one
-# merges. The release commit triggers cli-release.yml, which builds the binaries
-# and attaches them to the GitHub release.
+# Manual. Run on `main` to open or update the release PR (version bump and
+# changelog, from Conventional Commits) with `release-plz release-pr`.
 #
-# For a release candidate cut from a branch, use prepare-prerelease.yml.
+# The release PR is opened and updated with GITHUB_TOKEN, so its
+# `pull_request` runs wait in `action_required` until a maintainer approves
+# them ("Approve and run"); every push by this workflow needs a new approval.
+# If no runs appear, close and reopen the PR (`ci.yml` runs on `reopened`).
+# The strict required-checks ruleset means a PR that is behind `main` needs
+# fresh checks after any later push to `main`: click "Update branch", or
+# dispatch this again and approve the new runs.
+#
+# Then check the required checks pass, review, and merge.
+# Merging starts release.yml.
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
 
 jobs:
-  prepare-release:
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/prepare-release.yml@v0.4.10
-    with:
-      # The Release step runs later, from cli-release.yml, once the binaries
-      # it attaches exist.
-      knope-workflow: draft-release
-    secrets:
-      # A PAT or app token, not GITHUB_TOKEN: pushes made with GITHUB_TOKEN do
-      # not trigger cli-release.yml.
-      token: ${{ secrets.RELEASE_TOKEN }}
+  release-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Refuse other branches
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Dispatch this on main. (Use 'Prepare prerelease' to release changes on an unmerged branch.)"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

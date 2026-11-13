@@ -1,0 +1,56 @@
+name: Build and publish a release
+
+# Called by release.yml and prepare-prerelease.yml once the tag and its draft
+# GitHub release exist: builds the binaries from the tag, attaches them, and
+# only then undrafts the release, so a release is never visible without the
+# binaries that make it installable.
+#
+# Safe to re-run: uploads overwrite. It refuses to modify a release that is not
+# a draft, since that would change what users already installed.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag to build and publish; its draft release must exist."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # TODO(github.com/rigetti/qcs-gha-infrastructure#21): move publish into the shared
+  # repository too, once it has a release flow that needs no PAT or knope.
+  build:
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@v0.4.10
+    with:
+      bin: todo-curator
+      ref: refs/tags/${{ inputs.tag }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach the binaries and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh release view "${TAG}" --repo "${REPO}" --json isDraft -q .isDraft)" != "true" ]]; then
+            echo "::error::${TAG} is not a draft; refusing to modify it."
+            exit 1
+          fi
+          ls -l release
+          gh release upload "${TAG}" release/* --repo "${REPO}" --clobber
+          # Keeps the prerelease flag the draft was created with.
+          gh release edit "${TAG}" --repo "${REPO}" --draft=false

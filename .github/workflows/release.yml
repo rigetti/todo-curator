@@ -1,0 +1,92 @@
+name: Release
+
+# Runs when a release PR (prepare-release.yml; labeled `release`) is merged
+# into `main`. Releases the version in Cargo.toml: `release-plz release` tags
+# the PR's merge commit and creates a draft GitHub release, then
+# build-release.yml builds, attaches, and publishes.
+#
+# The merge is done by a person, so this run starts without the approval that
+# the release PR's own runs need.
+#
+# If the version in Cargo.toml is already tagged, release-plz does nothing and
+# neither does the rest of this workflow. To recover from a failed build or
+# publish, use "Re-run failed jobs" on the original run: the `release` job's
+# tag output is kept.
+#
+# A dispatch on `main` releases the version in Cargo.toml if it has no tag yet,
+# for example after a release PR was merged without its `release` label.
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged &&
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'release'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      # Empty if release-plz released nothing.
+      tag: ${{ steps.release-plz.outputs.releases_created == 'true' && fromJSON(steps.release-plz.outputs.releases)[0].tag || '' }}
+    steps:
+      - name: Refuse other branches
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Dispatch this on main."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit on `main`, whatever the merge method.
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Tag and create the draft release
+        id: release-plz
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # A draft release alone creates no tag, and build-release.yml builds
+      # from the tag: fail here, clearly, if release-plz did not push it.
+      - name: Check the tag exists
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ fromJSON(steps.release-plz.outputs.releases)[0].tag }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::release-plz did not push ${TAG}."
+            exit 1
+          fi
+
+  build-release:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}

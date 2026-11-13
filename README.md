@@ -110,8 +110,37 @@ the install off GitHub's unauthenticated API rate limit, which can be as low as
 If a repository's own tests or docs contain TODO-shaped text, set
 `exclude-file-regex` or the checks will flag them.
 
-### Shared QCS workflows
+## Releasing
 
-Reusable Rust CI and release workflows live in
-[`rigetti/qcs-gha-infrastructure`](https://github.com/rigetti/qcs-gha-infrastructure).
-This repository's own `.github/workflows/` directory is a working example.
+Releases go through a release PR, with [release-plz](https://release-plz.dev)
+configured in `release-plz.toml`.
+Merging the release PR creates a GitHub release; nothing else does.
+
+1. Run the `Prepare release` workflow on `main`.
+   It opens or updates a release PR (version bump and changelog) from the
+   Conventional Commits since the last release, with release-plz's defaults:
+   any commit that changes a packaged file counts, whatever its type.
+   For example, a history of only `chore(deps)` lockfile bumps still opens a
+   patch-bump PR, and no new commits opens none.
+   In 0.x, a breaking change bumps the minor version, anything else the patch.
+2. Approve the release PR's workflow runs.
+   Because release-plz opens and updates the PR with `GITHUB_TOKEN`,
+   its `pull_request` runs wait in `action_required`
+   until a maintainer approves them in the Actions tab
+   ("Approve and run" on the PR or the run).
+   Each push by release-plz needs a new approval.
+   If no runs appear, close and reopen the PR instead; `ci.yml` runs on `reopened`.
+   The required-checks ruleset is strict, so after any later push to `main`,
+   either click "Update branch" on the PR, or dispatch `Prepare release` again
+   and approve the new runs.
+   Then review and merge.
+3. Merging starts the `Release` workflow (any merge method).
+   It tags the merge commit, creates a draft release, builds the binaries,
+   attaches them, and only then publishes the release.
+   It runs for merged PRs labeled `release`, which release-plz adds.
+   If the build or publish fails, use "Re-run failed jobs" on that run.
+   If a release PR was merged without its `release` label, dispatch `Release`
+   on `main`: it releases the version in `Cargo.toml` if it has no tag yet.
+
+For a build of unmerged work, run `Prepare prerelease` on a branch.
+It pushes a tag only; nothing lands on the branch.
