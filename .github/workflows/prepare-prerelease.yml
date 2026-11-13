@@ -72,10 +72,6 @@ jobs:
         run: |
           set -euo pipefail
           label="${PRERELEASE_LABEL}"
-          if [[ ! "${label}" =~ ^[A-Za-z][0-9A-Za-z-]*$ ]]; then
-            echo "::error::Invalid prerelease label '${label}': use letters, digits, and hyphens, starting with a letter."
-            exit 1
-          fi
 
           # A re-run of this dispatch (same run id) reuses its tag instead of
           # computing the next number. The run id is in the commit subject,

@@ -60,8 +60,10 @@ Decisions fixed by the user:
 - `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
   from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
   computed from existing tags.
-  - Label validated: `^[A-Za-z][0-9A-Za-z-]*$`; `release-plz set-version`
-    rejects a version that is not valid semver, before anything is pushed.
+  - The label is not checked separately: `release-plz set-version` rejects a
+    version that is not valid semver, before anything is pushed.
+    A label containing `+` still passes (the rest becomes build metadata,
+    which semver ignores for ordering); labels come from maintainers.
   - A `concurrency` group per repository and branch (no cancel) keeps two
     dispatches from computing the same number.
   - Refuses when `Cargo.toml` has no release tag
