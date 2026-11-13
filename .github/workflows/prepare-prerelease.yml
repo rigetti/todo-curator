@@ -86,7 +86,7 @@ jobs:
             # but not released, or this is a release PR branch.
             current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
             if ! git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
-              echo "::error::Cargo.toml is at ${current}, which has no release tag: a release PR is merged but not released, or this branch carries a release PR. Dispatch the Release workflow on main, or release through the release PR; a prerelease needs a version that is already released."
+              echo "::error::Cargo.toml is at ${current}, which has no release tag: a release PR is merged but not released, or this branch carries a release PR. Dispatch the Release workflow on main, or release through the release PR; a prerelease needs a base version that is already released."
               exit 1
             fi
 
