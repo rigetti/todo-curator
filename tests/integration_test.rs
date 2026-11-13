@@ -49,8 +49,7 @@ fn test_example_todos_file() {
     // Ensure the test data file exists
     assert!(
         data_path.exists(),
-        "Test data file should exist at {:?}",
-        data_path
+        "Test data file should exist at {data_path:?}"
     );
 
     // Run the binary with the test data
@@ -82,26 +81,21 @@ fn test_example_todos_file() {
             stdout.contains("TODO comments referencing closed issues/MRs:")
                 || stdout.contains("All TODO references are valid.")
                 || stdout.contains("TODO comments referencing non-existent"),
-            "Expected to find TODO analysis in stdout. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
-            stdout,
-            stderr
+            "Expected to find TODO analysis in stdout. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         );
 
         // Should find the known closed issues from rust-lang/rust#1 and microsoft/vscode#1
         if stdout.contains("TODO comments referencing closed issues/MRs:") {
             assert!(
                 stdout.contains("rust-lang/rust#1") || stdout.contains("microsoft/vscode#1"),
-                "Expected to find known closed issues. Got:\n{}",
-                stdout
+                "Expected to find known closed issues. Got:\n{stdout}"
             );
         }
     } else {
         // Without authentication, should get an auth error or warning
         assert!(
             stderr.contains("auth") || stderr.contains("token") || stderr.contains("Warning"),
-            "Expected authentication error or warning. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
-            stdout,
-            stderr
+            "Expected authentication error or warning. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         );
     }
 }
@@ -150,12 +144,12 @@ fn test_epic_extraction() {
     let test_file = temp_dir.join("test_epic_extraction.rs");
 
     // Create a test file with various epic formats
-    let content = r#"
+    let content = r"
 // TODO &17: local epic reference
 // TODO rigetti/qcs/services&42: epic with group path
 // TODO https://gitlab.com/groups/rigetti/qcs/services/-/epics/123: full URL
 // TODO gitlab.com/groups/rigetti/qcs/services/-/epics/456: URL without schema
-"#;
+";
 
     fs::write(&test_file, content).expect("Failed to write test file");
 
@@ -278,8 +272,7 @@ fn test_directory_scanning() {
     // The exact output depends on authentication, but it shouldn't panic
     assert!(
         !stderr.contains("panic") && !stderr.contains("thread 'main' panicked"),
-        "Should not panic when scanning directory. Got:\n{}",
-        stderr
+        "Should not panic when scanning directory. Got:\n{stderr}"
     );
 }
 
@@ -313,16 +306,12 @@ fn test_check_invalid_skips_auth_validation() {
 
     assert!(
         !stderr.contains("auth") && !stderr.contains("token"),
-        "check-invalid should not prompt for auth. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
-        stdout,
-        stderr
+        "check-invalid should not prompt for auth. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
     );
     assert!(
         stdout.contains("Invalid TODO-like comments:")
             || stdout.contains("TODO comments referencing"),
-        "Expected invalid TODO output. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
-        stdout,
-        stderr
+        "Expected invalid TODO output. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
     );
 }
 
@@ -359,9 +348,7 @@ fn test_empty_gitlab_token_is_not_configured_auth() {
 
     assert!(
         !stderr.contains("Failed to initialize GitLab client"),
-        "An empty GITLAB_TOKEN should be ignored, not used to build a client. Got:\nSTDOUT:\n{}\nSTDERR:\n{}",
-        stdout,
-        stderr
+        "An empty GITLAB_TOKEN should be ignored, not used to build a client. Got:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
     );
 }
 
@@ -585,7 +572,7 @@ fn test_lint_valid_patterns() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO #123:
 // TODO rigetti/qcs/magneto#229:
 // TODO github.com/owner/repo#456:
@@ -607,7 +594,7 @@ fn test_lint_valid_patterns() {
 // TODO(#7, #8, github.com/foo/bar#1) parenthesized comma-delimited refs
 // TODO( #9 , rigetti/qcs/magneto#10 , github.com/owner/repo#11 ) parenthesized comma-delimited refs with spacing
 // using todo-curator in a comment is fine
-"#;
+";
 
     fs::write(temp_dir.join("good.rs"), content).unwrap();
 
@@ -700,14 +687,14 @@ fn test_lowercase_todo_temp_require_comment_indicator() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 temp
 todo
 todo-item
 # temp
 // todo
 # todo-curator
-"#;
+";
 
     fs::write(temp_dir.join("note.txt"), content).unwrap();
 
@@ -751,11 +738,11 @@ fn test_extractor_reports_incorrect_todo_syntax() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO without a ticket reference
 // TODO: still no ticket
 // TODO #123: valid
-"#;
+";
 
     fs::write(temp_dir.join("bad_todos.rs"), content).unwrap();
 
@@ -783,9 +770,9 @@ fn test_extractor_multiple_todos_on_one_line() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO (#7) TODO #18: TODO(#1,#2)
-"#;
+";
 
     fs::write(temp_dir.join("multi_todo.rs"), content).unwrap();
 
@@ -814,9 +801,7 @@ fn test_extractor_multiple_todos_on_one_line() {
                     ..
                 } if *n == number
             )),
-            "Should extract local issue #{} from multiple TODOs on one line. Got: {:#?}",
-            number,
-            refs
+            "Should extract local issue #{number} from multiple TODOs on one line. Got: {refs:#?}"
         );
     }
 }
@@ -831,7 +816,7 @@ fn test_parenthesized_todo_extraction() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO(#100) local GitLab issue
 // TODO(rigetti/qcs/magneto#200) cross-project GitLab issue
 // TODO(github.com/owner/repo#300) GitHub issue
@@ -846,7 +831,7 @@ fn test_parenthesized_todo_extraction() {
 // TODO (&840) local epic with spacing
 // TODO(#7, #8, github.com/foo/bar#1) comma-delimited refs
 // TODO( #9 , rigetti/qcs/magneto#10 , github.com/owner/repo#11 ) comma-delimited refs with spacing
-"#;
+";
 
     fs::write(temp_dir.join("parens.rs"), content).unwrap();
 
@@ -876,8 +861,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO(#100). Got: {:#?}",
-        refs
+        "Should extract TODO(#100). Got: {refs:#?}"
     );
 
     // Cross-project GitLab issue
@@ -894,8 +878,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if p == "rigetti/qcs/magneto"
         )),
-        "Should extract TODO(rigetti/qcs/magneto#200). Got: {:#?}",
-        refs
+        "Should extract TODO(rigetti/qcs/magneto#200). Got: {refs:#?}"
     );
 
     // GitHub issue
@@ -912,8 +895,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if repo == "owner/repo"
         )),
-        "Should extract TODO(github.com/owner/repo#300). Got: {:#?}",
-        refs
+        "Should extract TODO(github.com/owner/repo#300). Got: {refs:#?}"
     );
 
     // Local MR
@@ -929,8 +911,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO(!400). Got: {:#?}",
-        refs
+        "Should extract TODO(!400). Got: {refs:#?}"
     );
 
     // Cross-project MR
@@ -947,8 +928,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if p == "rigetti/qcs/magneto"
         )),
-        "Should extract TODO(rigetti/qcs/magneto!500). Got: {:#?}",
-        refs
+        "Should extract TODO(rigetti/qcs/magneto!500). Got: {refs:#?}"
     );
 
     // Local epic
@@ -964,8 +944,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO(&600). Got: {:#?}",
-        refs
+        "Should extract TODO(&600). Got: {refs:#?}"
     );
 
     // Epic with group
@@ -982,8 +961,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if g == "rigetti/qcs/services"
         )),
-        "Should extract TODO(rigetti/qcs/services&700). Got: {:#?}",
-        refs
+        "Should extract TODO(rigetti/qcs/services&700). Got: {refs:#?}"
     );
 
     // Local GitLab issue with spacing before parenthesized ref
@@ -999,8 +977,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO (#800). Got: {:#?}",
-        refs
+        "Should extract TODO (#800). Got: {refs:#?}"
     );
 
     // Cross-project GitLab issue with spacing before parenthesized ref
@@ -1017,8 +994,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if p == "rigetti/qcs/magneto"
         )),
-        "Should extract TODO (rigetti/qcs/magneto#810). Got: {:#?}",
-        refs
+        "Should extract TODO (rigetti/qcs/magneto#810). Got: {refs:#?}"
     );
 
     // GitHub issue with spacing before parenthesized ref
@@ -1035,8 +1011,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if repo == "owner/repo"
         )),
-        "Should extract TODO (github.com/owner/repo#820). Got: {:#?}",
-        refs
+        "Should extract TODO (github.com/owner/repo#820). Got: {refs:#?}"
     );
 
     // Local MR with spacing before parenthesized ref
@@ -1052,8 +1027,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO (!830). Got: {:#?}",
-        refs
+        "Should extract TODO (!830). Got: {refs:#?}"
     );
 
     // Local epic with spacing before parenthesized ref
@@ -1069,8 +1043,7 @@ fn test_parenthesized_todo_extraction() {
                 ..
             }
         )),
-        "Should extract TODO (&840). Got: {:#?}",
-        refs
+        "Should extract TODO (&840). Got: {refs:#?}"
     );
 
     // Comma-delimited refs: local GitLab issues #7, #8, #9
@@ -1087,9 +1060,7 @@ fn test_parenthesized_todo_extraction() {
                     ..
                 } if *n == number
             )),
-            "Should extract local issue #{} from comma-delimited TODO list. Got: {:#?}",
-            number,
-            refs
+            "Should extract local issue #{number} from comma-delimited TODO list. Got: {refs:#?}"
         );
     }
 
@@ -1107,8 +1078,7 @@ fn test_parenthesized_todo_extraction() {
             }
             if p == "rigetti/qcs/magneto"
         )),
-        "Should extract rigetti/qcs/magneto#10 from comma-delimited TODO list. Got: {:#?}",
-        refs
+        "Should extract rigetti/qcs/magneto#10 from comma-delimited TODO list. Got: {refs:#?}"
     );
 
     // Comma-delimited refs: GitHub shorthand issues
@@ -1126,8 +1096,7 @@ fn test_parenthesized_todo_extraction() {
                 }
                 if rp == repo && *n == number
             )),
-            "Should extract github.com/{repo}#{number} from comma-delimited TODO list. Got: {:#?}",
-            refs
+            "Should extract github.com/{repo}#{number} from comma-delimited TODO list. Got: {refs:#?}"
         );
     }
 }
@@ -1142,10 +1111,10 @@ fn test_gitlab_work_item_url_extraction() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO https://gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/123:
 // TODO gitlab.com/rigetti/qcs/services/compute-v2/-/work_items/456:
-"#;
+";
 
     fs::write(temp_dir.join("work_items.rs"), content).unwrap();
 
@@ -1174,8 +1143,7 @@ fn test_gitlab_work_item_url_extraction() {
             }
             if p == "rigetti/qcs/services/compute-v2"
         )),
-        "Should extract full-schema work_items URL as GitLab issue. Got: {:#?}",
-        refs
+        "Should extract full-schema work_items URL as GitLab issue. Got: {refs:#?}"
     );
 
     assert!(
@@ -1191,8 +1159,7 @@ fn test_gitlab_work_item_url_extraction() {
             }
             if p == "rigetti/qcs/services/compute-v2"
         )),
-        "Should extract no-schema work_items URL as GitLab issue. Got: {:#?}",
-        refs
+        "Should extract no-schema work_items URL as GitLab issue. Got: {refs:#?}"
     );
 }
 
@@ -1206,10 +1173,10 @@ fn test_cross_project_shorthand_disambiguation() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO owner/repo#7: rendered shorthand resolves as GitLab issue
 // TODO github.com/owner/repo#7: explicit GitHub shorthand
-"#;
+";
 
     fs::write(temp_dir.join("shorthand.rs"), content).unwrap();
 
@@ -1244,8 +1211,7 @@ fn test_cross_project_shorthand_disambiguation() {
             }
             if p == "owner/repo"
         )),
-        "owner/repo#7 should parse as GitLabIssue. Got: {:#?}",
-        refs
+        "owner/repo#7 should parse as GitLabIssue. Got: {refs:#?}"
     );
 
     assert!(
@@ -1261,8 +1227,7 @@ fn test_cross_project_shorthand_disambiguation() {
             }
             if p == "owner/repo"
         )),
-        "github.com/owner/repo#7 should parse as GitHubIssueOrPr. Got: {:#?}",
-        refs
+        "github.com/owner/repo#7 should parse as GitHubIssueOrPr. Got: {refs:#?}"
     );
 }
 
@@ -1275,10 +1240,10 @@ fn test_github_bang_reference_is_pull_request() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let content = r#"
+    let content = r"
 // TODO(https://github.com/owner/repo!1) schema form
 // TODO(github.com/owner/other!2) bare-host form
-"#;
+";
     fs::write(temp_dir.join("bang.rs"), content).unwrap();
 
     let extraction = TodoExtractor::new()
@@ -1400,12 +1365,12 @@ fn test_bare_group_shorthand_is_work_item() {
 fn test_group_work_item_urls() {
     let extraction = extract_refs_from_content(
         "group_work_item_urls",
-        r#"
+        r"
 // TODO https://gitlab.com/groups/rigetti/-/work_items/146: with scheme
 // TODO gitlab.com/groups/rigetti/-/work_items/147: without scheme
 // TODO https://gitlab.com/groups/rigetti/qcs/services/-/work_items/148: nested group
 // TODO(gitlab.com/groups/rigetti/qcs/-/work_items/149)
-"#,
+",
     );
     assert!(
         extraction.lint_violations.is_empty(),
@@ -1486,13 +1451,13 @@ fn test_group_work_item_recommended_format_round_trips() {
 fn test_work_item_parsing_does_not_regress_issues_and_epics() {
     let extraction = extract_refs_from_content(
         "work_item_no_regression",
-        r#"
+        r"
 // TODO https://gitlab.com/group/proj/-/work_items/1: project work item URL
 // TODO gitlab.com/group/sub/proj/-/issues/2: project issue URL
 // TODO gitlab.com/groups/x/-/epics/3: epic URL
 // TODO group/proj#4: rendered project issue
 // TODO x/y&5: rendered epic
-"#,
+",
     );
     assert!(
         extraction.lint_violations.is_empty(),
@@ -1621,10 +1586,10 @@ fn test_malformed_work_item_references_are_rejected() {
 fn test_work_item_url_suggestion() {
     let extraction = extract_refs_from_content(
         "work_item_suggestion",
-        r#"
+        r"
 // TODO gitlab.com/groups/rigetti/-/work_items/146: x
 // TODO gitlab.com/groups/rigetti/qcs/-/work_items/147: nested
-"#,
+",
     );
     let r = find_ref(&extraction, "gitlab.com/groups/rigetti/-/work_items/146");
     assert!(matches!(r.kind, TodoReferenceKind::GitLabWorkItem { .. }));

@@ -25,7 +25,7 @@ enum OutputFormat {
 #[command(version)]
 #[command(arg_required_else_help = true)]
 struct Cli {
-    /// Print the usage spec (https://usage.jdx.dev) for this CLI and exit
+    /// Print the usage spec (<https://usage.jdx.dev>) for this CLI and exit
     #[arg(long, hide = true)]
     usage_spec: bool,
 
@@ -64,7 +64,7 @@ struct Args {
 }
 
 #[derive(Subcommand)]
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 enum Commands {
     #[command(about = "Check for TODO comments referencing closed issues or MRs")]
     CheckClosed {
@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
         .expect("clap requires a subcommand unless --usage-spec is given");
 
     if matches!(command, Commands::ValidateAuth) {
-        todo_curator::checker::StatusChecker::validate_auth().await?;
+        StatusChecker::validate_auth().await?;
         println!("Authentication validated for GitHub and GitLab.");
         return Ok(());
     }
@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         ProjectDetection::None => {
             tracing::error!("No project detected!");
         }
-    };
+    }
 
     let needs_auth = matches!(
         command,
@@ -272,7 +272,7 @@ fn print_output<W: Write>(
         OutputFormat::Json => {
             // Use serde to serialize the output
             let json = serde_json::to_string_pretty(output)?;
-            writeln!(writer, "{}", json)?;
+            writeln!(writer, "{json}")?;
         }
         OutputFormat::Text => {
             print_text_output(writer, output)?;
@@ -388,7 +388,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
         writeln!(
             writer,
             "  {}",
-            r#"use `TODO (<ref>)`, where `<ref>` is `[repo]#<ticket>`, `<group>#<work-item>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"#
+            r"use `TODO (<ref>)`, where `<ref>` is `[repo]#<ticket>`, `<group>#<work-item>`, `[repo]!<merge-request>`, `[group]&<epic>`, or `performance`"
                 .yellow()
         )?;
         for violation in &output.lint_violations {
@@ -466,7 +466,7 @@ fn print_mr_text_output<W: Write + ?Sized>(
                 },
             };
             let json = serde_json::to_string_pretty(&mr_output)?;
-            writeln!(writer, "{}", json)?;
+            writeln!(writer, "{json}")?;
         }
         OutputFormat::Text => {
             if mr_issues.is_empty() {

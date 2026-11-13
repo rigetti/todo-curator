@@ -17,6 +17,7 @@ pub enum ProjectDetection {
 
 impl ProjectDetection {
     /// Return true when this detection is GitLab and the project path matches exactly.
+    #[must_use]
     pub fn matches_gitlab(&self, project_path: &str) -> bool {
         match self {
             Self::GitLab(project) => project == project_path,
@@ -25,6 +26,7 @@ impl ProjectDetection {
     }
 
     /// Return true when this detection is GitLab and its parent group matches the expected group.
+    #[must_use]
     pub fn parent_group_matches(&self, group_path: &str) -> bool {
         match self {
             Self::GitLab(project) => project
@@ -199,7 +201,7 @@ impl StatusChecker {
     }
 
     /// Detect project from git remote origin URL
-    /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
+    /// Returns `ProjectDetection` enum indicating GitHub, GitLab, or no project
     pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
         // Check for CI_PROJECT_PATH first (GitLab CI)
         if let Some(ci_project_path) = Self::env_var("CI_PROJECT_PATH") {
@@ -427,7 +429,7 @@ impl StatusChecker {
             {
                 Ok(Some(closed_ref)) => {
                     tracing::info!("Reference closed: {:?}", closed_ref.reference);
-                    closed.push(closed_ref)
+                    closed.push(closed_ref);
                 }
                 Ok(None) => {
                     tracing::info!("Reference exists but is not closed: {:?}", reference);
@@ -505,7 +507,7 @@ impl StatusChecker {
 
         let endpoint = issues::Issue::builder()
             .project(project_path)
-            .issue(number as u64)
+            .issue(u64::from(number))
             .build()
             .context("Failed to build GitLab issue query")?;
 
@@ -549,14 +551,14 @@ impl StatusChecker {
 
         let parts: Vec<&str> = repo_path.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo_path);
+            anyhow::bail!("Invalid GitHub repo format: {repo_path}");
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
-        let issue = match client.issues(owner, repo_name).get(number as u64).await {
+        let issue = match client.issues(owner, repo_name).get(u64::from(number)).await {
             Ok(issue) => issue,
             Err(e) => {
-                anyhow::bail!("GitHub issue not found or inaccessible: {}", e);
+                anyhow::bail!("GitHub issue not found or inaccessible: {e}");
             }
         };
 
@@ -591,7 +593,7 @@ impl StatusChecker {
 
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)
-            .merge_request(number as u64)
+            .merge_request(u64::from(number))
             .build()
             .context("Failed to build GitLab MR query")?;
 
@@ -622,11 +624,11 @@ impl StatusChecker {
 
         let parts: Vec<&str> = repo.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo);
+            anyhow::bail!("Invalid GitHub repo format: {repo}");
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
-        let pr = match client.pulls(owner, repo_name).get(number as u64).await {
+        let pr = match client.pulls(owner, repo_name).get(u64::from(number)).await {
             Ok(pr) => pr,
             Err(_) => return Ok(None),
         };
@@ -667,8 +669,7 @@ impl StatusChecker {
                             parts[..parts.len() - 1].join("/")
                         } else {
                             anyhow::bail!(
-                                "Cannot determine group from project path: {}",
-                                project_path
+                                "Cannot determine group from project path: {project_path}"
                             )
                         }
                     }
@@ -707,7 +708,7 @@ impl StatusChecker {
 
         // Check if the response contains an error message (404, 403, etc.)
         if let Some(message) = epic.get("message").and_then(|v| v.as_str()) {
-            anyhow::bail!("GitLab API error: {}", message);
+            anyhow::bail!("GitLab API error: {message}");
         }
 
         // Parse the epic state
@@ -941,7 +942,7 @@ mod tests {
     use serde_json::json;
 
     /// Run `f` with exactly the given environment variables set.
-    #[allow(clippy::result_large_err)] // `figment::Error` is dictated by `Jail`'s API.
+    #[expect(clippy::result_large_err)] // `figment::Error` is dictated by `Jail`'s API.
     fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
         let mut out = None;
         figment::Jail::expect_with(|jail| {

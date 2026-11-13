@@ -21,8 +21,8 @@ fn walk_source_files(dir: &Path) -> impl Iterator<Item = DirEntry> {
     }
     builder
         .build()
-        .filter_map(|result| result.ok())
-        .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
 }
 
 /// A lint violation found in a TODO comment.
@@ -86,6 +86,7 @@ pub struct TodoReference {
 }
 
 impl TodoReference {
+    #[must_use]
     pub fn new(
         kind: TodoReferenceKind,
         source_line: &str,
@@ -104,65 +105,70 @@ impl TodoReference {
         }
     }
 
+    #[must_use]
     pub fn display(&self) -> String {
         match &self.kind {
             TodoReferenceKind::GitLabIssue {
                 project: None,
                 number,
                 ..
-            } => format!("#{}", number),
+            } => format!("#{number}"),
             TodoReferenceKind::GitLabIssue {
                 project: Some(p),
                 number,
                 ..
-            } => format!("{}#{}", p, number),
+            } => format!("{p}#{number}"),
             TodoReferenceKind::GitHubIssueOrPr {
                 repo: Some(repo),
                 number,
                 ..
-            } => format!("{}#{}", repo, number),
+            } => format!("{repo}#{number}"),
             TodoReferenceKind::GitHubIssueOrPr {
                 repo: None, number, ..
-            } => format!("#{}", number),
+            } => format!("#{number}"),
             TodoReferenceKind::GitLabMr {
                 project: None,
                 number,
                 ..
-            } => format!("!{}", number),
+            } => format!("!{number}"),
             TodoReferenceKind::GitLabMr {
                 project: Some(p),
                 number,
                 ..
-            } => format!("{}!{}", p, number),
-            TodoReferenceKind::GitHubPr { repo, number, .. } => format!("{}#{}", repo, number),
+            } => format!("{p}!{number}"),
+            TodoReferenceKind::GitHubPr { repo, number, .. } => format!("{repo}#{number}"),
             TodoReferenceKind::GitLabEpic {
                 group: None,
                 number,
                 ..
-            } => format!("&{}", number),
+            } => format!("&{number}"),
             TodoReferenceKind::GitLabEpic {
                 group: Some(g),
                 number,
                 ..
-            } => format!("{}&{}", g, number),
+            } => format!("{g}&{number}"),
             TodoReferenceKind::GitLabWorkItem { group, number } => {
-                format!("{}#{}", group, number)
+                format!("{group}#{number}")
             }
         }
     }
 
+    #[must_use]
     pub fn source_line(&self) -> &str {
         &self.source_line
     }
 
+    #[must_use]
     pub fn file_path(&self) -> &str {
         &self.file_path
     }
 
-    pub fn line_number(&self) -> u64 {
+    #[must_use]
+    pub const fn line_number(&self) -> u64 {
         self.line_number
     }
 
+    #[must_use]
     pub fn suggest_simplified_format(
         &self,
         project_detection: &ProjectDetection,
@@ -230,6 +236,7 @@ impl Default for TodoExtractor {
 }
 
 impl TodoExtractor {
+    #[must_use]
     pub fn new() -> Self {
         Self::with_exclude_file_regex("").expect("empty string is a valid regex")
     }
@@ -750,12 +757,14 @@ impl TodoExtractor {
             }
         }
 
-        let references = Arc::try_unwrap(all_references)
-            .map(|mutex| mutex.into_inner().unwrap())
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
-        let lint_violations = Arc::try_unwrap(lint_violations)
-            .map(|mutex| mutex.into_inner().unwrap())
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        let references = Arc::try_unwrap(all_references).map_or_else(
+            |arc| arc.lock().unwrap().clone(),
+            |mutex| mutex.into_inner().unwrap(),
+        );
+        let lint_violations = Arc::try_unwrap(lint_violations).map_or_else(
+            |arc| arc.lock().unwrap().clone(),
+            |mutex| mutex.into_inner().unwrap(),
+        );
         let mut deduped_lint_violations: HashMap<(String, u64, String), LintViolation> =
             HashMap::new();
         for violation in lint_violations {
