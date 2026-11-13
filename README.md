@@ -114,7 +114,7 @@ If a repository's own tests or docs contain TODO-shaped text, set
 
 Releases go through a release PR, with [release-plz](https://release-plz.dev)
 configured in `release-plz.toml`.
-Merging the release PR releases; nothing else does.
+Merging the release PR creates a GitHub release; nothing else does.
 
 1. Run the `Prepare release` workflow on `main`.
    It opens or updates a release PR (version bump and changelog) from the
