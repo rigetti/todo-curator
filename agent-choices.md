@@ -41,8 +41,10 @@ Decisions fixed by the user:
   - No early refusal of an already published version (`publish` refuses a
     non-draft, after the builds), no refusal of a prerelease version in
     `Cargo.toml`, and no check that an existing tag is an ancestor of `main`.
-  - `build` from the tag; `publish` requires a draft, then
-    `gh release upload --clobber` and `gh release edit --draft=false`.
+  - `build-release.yml` (`workflow_call`, shared with the prerelease, called
+    by local path so it runs at the caller's commit): `build` from the tag;
+    `publish` requires a draft, then `gh release upload --clobber` and
+    `gh release edit --draft=false`, which keeps the prerelease flag.
   - Re-running after a failure is the recovery path (no `tag` input).
 - `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
   from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
@@ -58,8 +60,8 @@ Decisions fixed by the user:
   - The version is bumped with `release-plz set-version`.
     It also renames the newest `CHANGELOG.md` heading, which is harmless:
     that commit exists only under the prerelease tag.
-  - Publish is re-runnable: existing draft reused, already published is a
-    no-op.
+  - The draft prerelease is created in the first job, with `--prerelease`;
+    an existing release is reused.
 
 ## release-plz configuration
 
