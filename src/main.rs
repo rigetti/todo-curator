@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
+use todo_curator::todo::TodoReference;
 use todo_curator::{
     check_closed_from_extraction, check_closed_references, check_invalid,
     check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
@@ -64,7 +65,6 @@ struct Args {
 }
 
 #[derive(Subcommand)]
-#[expect(clippy::enum_variant_names)]
 enum Commands {
     #[command(about = "Check for TODO comments referencing closed issues or MRs")]
     CheckClosed {
@@ -94,6 +94,15 @@ enum Commands {
     ValidateAuth,
 }
 
+/// The subcommands that scan a directory for TODOs.
+#[derive(Debug, Clone, Copy)]
+enum CheckKind {
+    Closed,
+    Invalid,
+    All,
+    MrTodos,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -107,21 +116,19 @@ async fn main() -> Result<()> {
         .command
         .expect("clap requires a subcommand unless --usage-spec is given");
 
-    if matches!(command, Commands::ValidateAuth) {
-        StatusChecker::validate_auth().await?;
-        println!("Authentication validated for GitHub and GitLab.");
-        return Ok(());
-    }
-
-    let path = match &command {
-        Commands::CheckClosed { args }
-        | Commands::CheckInvalid { args }
-        | Commands::CheckAll { args }
-        | Commands::CheckMrTodos { args } => args.path.clone(),
-        Commands::ValidateAuth => unreachable!(),
+    let (kind, args) = match command {
+        Commands::ValidateAuth => {
+            StatusChecker::validate_auth().await?;
+            println!("Authentication validated for GitHub and GitLab.");
+            return Ok(());
+        }
+        Commands::CheckClosed { args } => (CheckKind::Closed, args),
+        Commands::CheckInvalid { args } => (CheckKind::Invalid, args),
+        Commands::CheckAll { args } => (CheckKind::All, args),
+        Commands::CheckMrTodos { args } => (CheckKind::MrTodos, args),
     };
 
-    let project_detection = StatusChecker::detect_project(&path);
+    let project_detection = StatusChecker::detect_project(&args.path);
     match &project_detection {
         ProjectDetection::GitLab(project) => {
             tracing::debug!("Detected GitLab project: {project}");
@@ -134,114 +141,88 @@ async fn main() -> Result<()> {
         }
     }
 
-    let needs_auth = matches!(
-        command,
-        Commands::CheckClosed { .. } | Commands::CheckAll { .. } | Commands::CheckMrTodos { .. }
-    );
+    match kind {
+        CheckKind::Closed => run_check_closed(args, &project_detection).await,
+        CheckKind::Invalid => run_check_invalid(args, &project_detection),
+        CheckKind::All => run_check_all(args, &project_detection).await,
+        CheckKind::MrTodos => run_check_mr_todos(args, &project_detection).await,
+    }
+}
 
-    let checker = if needs_auth {
-        let checker = StatusChecker::new().await?;
-        checker.check_auth()?;
-        Some(checker)
+async fn authenticated_checker() -> Result<StatusChecker> {
+    let checker = StatusChecker::new().await?;
+    checker.check_auth()?;
+    Ok(checker)
+}
+
+async fn run_check_closed(args: Args, project_detection: &ProjectDetection) -> Result<()> {
+    let checker = authenticated_checker().await?;
+    let exclude_file_regex = args.exclude_file_regex.as_deref().unwrap_or("");
+    let result = check_closed_references(
+        args.path.clone(),
+        project_detection,
+        &checker,
+        exclude_file_regex,
+    )
+    .await?;
+    output_and_exit(&result, args.format, args.output)
+}
+
+fn run_check_invalid(args: Args, project_detection: &ProjectDetection) -> Result<()> {
+    let exclude_file_regex = args.exclude_file_regex.as_deref().unwrap_or("");
+    let result = check_invalid(&args.path, project_detection, exclude_file_regex)?;
+    output_and_exit(&result, args.format, args.output)
+}
+
+async fn run_check_all(args: Args, project_detection: &ProjectDetection) -> Result<()> {
+    let checker = authenticated_checker().await?;
+    let exclude_file_regex = args.exclude_file_regex.as_deref().unwrap_or("");
+    let extraction = extract_todos(&args.path, exclude_file_regex)?;
+    let mut closed_result =
+        check_closed_from_extraction(&extraction, project_detection, &checker).await?;
+    let invalid_result = check_invalid_from_extraction(&extraction, project_detection)?;
+    closed_result
+        .lint_violations
+        .extend(invalid_result.lint_violations);
+
+    // Also run MR check (best-effort: skip if not in MR context)
+    let mr_issues: Vec<MrIssue> =
+        find_mr_todos(&extraction.references, project_detection, &checker)
+            .await
+            .unwrap_or_default();
+
+    if closed_result.has_errors() || !mr_issues.is_empty() {
+        closed_result.status = "failure".to_string();
+    }
+
+    if let Some(ref p) = args.output {
+        let mut file = File::create(p)?;
+        print_output(&mut file, &closed_result, args.format)?;
+        print_mr_text_output(&mut file, &mr_issues, args.format)?;
     } else {
-        None
-    };
+        let mut stdout = io::stdout();
+        print_output(&mut stdout, &closed_result, args.format)?;
+        print_mr_text_output(&mut stdout, &mr_issues, args.format)?;
+    }
 
-    match command {
-        Commands::CheckClosed { args } => {
-            let Args {
-                path,
-                format,
-                output: output_path,
-                exclude_file_regex,
-            } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
-            let checker = checker
-                .as_ref()
-                .expect("checker should be initialized for check-closed");
-            let result =
-                check_closed_references(path, &project_detection, checker, exclude_file_regex)
-                    .await?;
-            output_and_exit(&result, format, output_path)?;
-        }
-        Commands::CheckInvalid { args } => {
-            let Args {
-                path,
-                format,
-                output: output_path,
-                exclude_file_regex,
-            } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
-            let result = check_invalid(&path, &project_detection, exclude_file_regex)?;
-            output_and_exit(&result, format, output_path)?;
-        }
-        Commands::CheckAll { args } => {
-            let Args {
-                path,
-                format,
-                output: output_path,
-                exclude_file_regex,
-            } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
-            let checker = checker
-                .as_ref()
-                .expect("checker should be initialized for check-all");
-            let extraction = extract_todos(&path, exclude_file_regex)?;
-            let mut closed_result =
-                check_closed_from_extraction(&extraction, &project_detection, checker).await?;
-            let invalid_result = check_invalid_from_extraction(&extraction, &project_detection)?;
-            closed_result
-                .lint_violations
-                .extend(invalid_result.lint_violations);
-
-            // Also run MR check (best-effort: skip if not in MR context)
-            let mr_issues: Vec<MrIssue> =
-                find_mr_todos(&extraction.references, &project_detection, checker)
-                    .await
-                    .unwrap_or_default();
-
-            if closed_result.has_errors() || !mr_issues.is_empty() {
-                closed_result.status = "failure".to_string();
-            }
-
-            if let Some(ref p) = output_path {
-                let mut file = File::create(p)?;
-                print_output(&mut file, &closed_result, format)?;
-                print_mr_text_output(&mut file, &mr_issues, format)?;
-            } else {
-                let mut stdout = io::stdout();
-                print_output(&mut stdout, &closed_result, format)?;
-                print_mr_text_output(&mut stdout, &mr_issues, format)?;
-            }
-
-            if closed_result.has_errors() || !mr_issues.is_empty() {
-                process::exit(1);
-            }
-        }
-        Commands::CheckMrTodos { args } => {
-            let Args {
-                path,
-                format,
-                output: output_path,
-                exclude_file_regex,
-            } = args;
-            let exclude_file_regex = exclude_file_regex.as_deref().unwrap_or("");
-            let checker = checker
-                .as_ref()
-                .expect("checker should be initialized for check-mr-todos");
-            let extraction = extract_todos(&path, exclude_file_regex)?;
-            check_mr_todos(
-                &extraction.references,
-                format,
-                output_path,
-                &project_detection,
-                checker,
-            )
-            .await?;
-        }
-        Commands::ValidateAuth => unreachable!(),
+    if closed_result.has_errors() || !mr_issues.is_empty() {
+        process::exit(1);
     }
     Ok(())
+}
+
+async fn run_check_mr_todos(args: Args, project_detection: &ProjectDetection) -> Result<()> {
+    let checker = authenticated_checker().await?;
+    let exclude_file_regex = args.exclude_file_regex.as_deref().unwrap_or("");
+    let extraction = extract_todos(&args.path, exclude_file_regex)?;
+    check_mr_todos(
+        &extraction.references,
+        args.format,
+        args.output,
+        project_detection,
+        &checker,
+    )
+    .await
 }
 
 fn output_and_exit(
@@ -291,7 +272,25 @@ struct MrTodosOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MrIssue {
     issue_number: u32,
-    references: Vec<todo_curator::todo::TodoReference>,
+    references: Vec<TodoReference>,
+}
+
+fn write_location<W: Write>(writer: &mut W, reference: &TodoReference) -> Result<()> {
+    writeln!(
+        writer,
+        "  {}:{}",
+        reference.file_path().bold(),
+        reference.line_number().to_string().bold()
+    )?;
+    Ok(())
+}
+
+fn write_source_line<W: Write>(writer: &mut W, reference: &TodoReference) -> Result<()> {
+    let source = reference.source_line();
+    if !source.is_empty() {
+        writeln!(writer, "  {}", source.dimmed())?;
+    }
+    Ok(())
 }
 
 fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<()> {
@@ -315,16 +314,8 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
         for (reference_display, (title, refs)) in grouped {
             writeln!(writer, "{}: {}", reference_display.yellow(), title)?;
             for closed_ref in refs {
-                writeln!(
-                    writer,
-                    "  {}:{}",
-                    closed_ref.reference.file_path().bold(),
-                    closed_ref.reference.line_number().to_string().bold()
-                )?;
-                let source = closed_ref.reference.source_line();
-                if !source.is_empty() {
-                    writeln!(writer, "  {}", source.dimmed())?;
-                }
+                write_location(writer, &closed_ref.reference)?;
+                write_source_line(writer, &closed_ref.reference)?;
             }
         }
     }
@@ -344,16 +335,8 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
                 not_found_ref.reference.display().yellow(),
                 not_found_ref.error
             )?;
-            writeln!(
-                writer,
-                "  {}:{}",
-                not_found_ref.reference.file_path().bold(),
-                not_found_ref.reference.line_number().to_string().bold()
-            )?;
-            let source = not_found_ref.reference.source_line();
-            if !source.is_empty() {
-                writeln!(writer, "  {}", source.dimmed())?;
-            }
+            write_location(writer, &not_found_ref.reference)?;
+            write_source_line(writer, &not_found_ref.reference)?;
         }
     }
 
@@ -370,12 +353,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
                 warning.original.yellow(),
                 warning.suggestion.green()
             )?;
-            writeln!(
-                writer,
-                "  {}:{}",
-                warning.reference.file_path().bold(),
-                warning.reference.line_number().to_string().bold()
-            )?;
+            write_location(writer, &warning.reference)?;
         }
     }
 
@@ -406,7 +384,7 @@ fn print_text_output<W: Write>(writer: &mut W, output: &CheckOutput) -> Result<(
 }
 
 async fn find_mr_todos(
-    references: &std::collections::HashSet<todo_curator::todo::TodoReference>,
+    references: &std::collections::HashSet<TodoReference>,
     project_detection: &ProjectDetection,
     checker: &StatusChecker,
 ) -> Result<Vec<MrIssue>> {
@@ -498,7 +476,7 @@ fn print_mr_text_output<W: Write + ?Sized>(
 }
 
 async fn check_mr_todos(
-    references: &std::collections::HashSet<todo_curator::todo::TodoReference>,
+    references: &std::collections::HashSet<TodoReference>,
     format: OutputFormat,
     output_path: Option<PathBuf>,
     project_detection: &ProjectDetection,
