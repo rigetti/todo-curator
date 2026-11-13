@@ -48,9 +48,14 @@ Decisions fixed by the user:
     non-draft, after the builds), no refusal of a prerelease version in
     `Cargo.toml`, and no check that an existing tag is an ancestor of `main`.
   - `build-release.yml` (`workflow_call`, shared with the prerelease, called
-    by local path so it runs at the caller's commit): `build` from the tag;
-    `publish` requires a draft, then `gh release upload --clobber` and
+    by local path so it runs at the caller's commit): `build` calls
+    `qcs-gha-infrastructure`'s `rust-cli-build.yml@v0.4.10` on the tag,
+    which needs no token beyond `contents: read`.
+    `publish` stays local, since the shared publish runs knope: it requires a
+    draft, then `gh release upload --clobber` and
     `gh release edit --draft=false`, which keeps the prerelease flag.
+    Moving publish to the shared repository is tracked by
+    rigetti/qcs-gha-infrastructure#21.
   - Re-running after a failure is the recovery path (no `tag` input).
 - `prepare-prerelease.yml` (dispatch on a non-`main` branch): the next version
   from `release-plz update --no-changelog`, plus `-<label>.<n>` with `n`
