@@ -33,7 +33,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_PLZ_VERSION: "0.4.3"
   TAG_RE: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
 
 jobs:
@@ -58,18 +57,11 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
 
-      - name: Install release-plz
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release download "release-plz-v${RELEASE_PLZ_VERSION}" \
-            --repo release-plz/release-plz \
-            --pattern 'release-plz-x86_64-unknown-linux-gnu.tar.gz' --dir "${RUNNER_TEMP}"
-          tar -xzf "${RUNNER_TEMP}/release-plz-x86_64-unknown-linux-gnu.tar.gz" -C "${RUNNER_TEMP}"
-          mkdir -p "${HOME}/.local/bin"
-          install -m 0755 "$(find "${RUNNER_TEMP}" -name release-plz -type f | head -1)" "${HOME}/.local/bin/release-plz"
-          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+      # `release-plz/action` only runs `release-pr` or `release`; this needs
+      # `release-plz update`. Keep the version in step with that action's.
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: release-plz@0.4.3
 
       - name: Bump, commit, and tag
         id: tag

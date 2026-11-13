@@ -63,6 +63,10 @@ Decisions fixed by the user:
 ## release-plz configuration
 
 - release-plz 0.4.3 and `release-plz/action` v0.5.148 (commit `66b324fd`).
+  `prepare-prerelease.yml` needs `release-plz update`, which the action does
+  not run, so it installs the same version with `taiki-e/install-action`
+  (v2.89.1, the oldest release whose manifest has release-plz 0.4.3;
+  it verifies the download's SHA-256).
 - `publish = false` in `Cargo.toml` (the crate is not on crates.io).
   `git_only = true` is needed: without it, release-plz skips a
   `publish = false` package.
@@ -94,7 +98,6 @@ Decisions fixed by the user:
 ## Deferred
 
 - Restricting the release workflows to an environment limited to `main`.
-- Checksum-verifying the release-plz tarball download in `prepare-prerelease.yml`.
 
 ## Open
 
