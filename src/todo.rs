@@ -663,7 +663,9 @@ impl TodoExtractor {
         // so this must include all lint-triggering keywords (e.g. FIXME), not just TODO.
         // Lowercase `todo` and `temp` are ignored unless they are clearly part of a single-line code comment,
         // since common patterns such as `temp` as a variable and the `todo!` Rust macro would otherwise trigger false positives.
-        let todo_pattern = r"\bTODO\b|(?i:\b(?:xxx|fixme|tbd|mvp)\b)|\bTEMP\b|(?:#|//).*(?:\btemp\b|\btodo(?:\b$|\b[^-]))";
+        // Uppercase `TEMP` and `TEMPORARY` always lint.
+        // Lowercase `temporary` is intentionally permitted: it is a useful word in ordinary prose.
+        let todo_pattern = r"\bTODO\b|(?i:\b(?:xxx|fixme|tbd|mvp)\b)|\bTEMP(?:ORARY)?\b|(?:#|//).*(?:\btemp\b|\btodo(?:\b$|\b[^-]))";
         let matcher = RegexMatcher::new(todo_pattern)?;
 
         for entry in walk_source_files(dir) {

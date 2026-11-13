@@ -741,6 +741,48 @@ todo-item
     );
 }
 
+/// Test that uppercase `TEMP` and `TEMPORARY` are both linted, regardless of comment markers.
+#[test_log::test]
+fn test_uppercase_temp_and_temporary_are_linted() {
+    use std::fs;
+    use todo_curator::todo::TodoExtractor;
+
+    let temp_dir = std::env::temp_dir().join("todo_curator_uppercase_temp_temporary");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let content = r#"
+TEMP
+TEMPORARY
+TEMPORARILY
+"#;
+
+    fs::write(temp_dir.join("note.txt"), content).unwrap();
+
+    let extractor = TodoExtractor::new();
+    let extraction = extractor.extract_from_directory(&temp_dir).unwrap();
+
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    let linted: Vec<&str> = extraction
+        .lint_violations
+        .iter()
+        .map(|v| v.source_line.as_str())
+        .collect();
+    assert!(
+        linted.contains(&"TEMP"),
+        "Expected 'TEMP' to be linted. Found: {linted:#?}"
+    );
+    assert!(
+        linted.contains(&"TEMPORARY"),
+        "Expected 'TEMPORARY' to be linted. Found: {linted:#?}"
+    );
+    assert!(
+        !linted.contains(&"TEMPORARILY"),
+        "Expected 'TEMPORARILY' not to be linted. Found: {linted:#?}"
+    );
+}
+
 /// Test that extractor reports TODO lines that do not match any extraction rule.
 #[test_log::test]
 fn test_extractor_reports_incorrect_todo_syntax() {
