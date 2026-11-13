@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.19](https://github.com/rigetti/todo-curator/compare/v0.1.18...v0.1.19) - 2026-11-13
+
+### Added
+
+- support GitLab job-token; don't require GitLab auth for CI ([#54](https://github.com/rigetti/todo-curator/pull/54))
+
+### Other
+
+- replace knope with release-plz ([#57](https://github.com/rigetti/todo-curator/pull/57))
+- *(deps)* bump the rigetti group with 5 updates ([#53](https://github.com/rigetti/todo-curator/pull/53))
+
 ## 0.1.18 (2026-11-01)
 
 ### Features
