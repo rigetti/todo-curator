@@ -54,8 +54,8 @@ Decisions fixed by the user:
     (release PR merged but not released, or a release PR branch).
   - The bump commit subject carries `[run <run id>]`; a re-run of the same
     dispatch finds its tag by that and reuses it, never computing `n+1`.
-  - The version is bumped with `sed` plus `cargo update`, not
-    `release-plz set-version`, which also renames the newest `CHANGELOG.md`
+  - The version is bumped with `release-plz set-version`, and `CHANGELOG.md`
+    is then restored: `set-version` also renames the newest `CHANGELOG.md`
     heading and would mislabel the previous release's entry.
   - Publish is re-runnable: existing draft reused, already published is a
     no-op.
