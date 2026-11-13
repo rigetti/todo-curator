@@ -8,8 +8,13 @@ name: Release
 # The merge is done by a person, so this run starts without the approval that
 # the release PR's own runs need.
 #
-# To recover from a failure, re-run it, or dispatch it on `main`: an existing
-# tag and draft are reused. A dispatch releases `main` as it is then.
+# If the version in Cargo.toml is already tagged, release-plz does nothing and
+# neither does the rest of this workflow. To recover from a failed build or
+# publish, use "Re-run failed jobs" on the original run: the `release` job's
+# tag output is kept.
+#
+# A dispatch on `main` releases the version in Cargo.toml if it has no tag yet,
+# for example after a release PR was merged without its `release` label.
 on:
   pull_request:
     types: [closed]
@@ -35,7 +40,8 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
-      tag: ${{ steps.version.outputs.tag }}
+      # Empty if release-plz released nothing.
+      tag: ${{ steps.release-plz.outputs.releases_created == 'true' && fromJSON(steps.release-plz.outputs.releases)[0].tag || '' }}
     steps:
       - name: Refuse other branches
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
@@ -53,52 +59,32 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
 
-      # The tag is needed even when release-plz creates nothing: re-running
-      # this job after release-plz tagged finds the tag and skips release-plz,
-      # whose output then lists no release.
-      - name: Determine the tag
-        id: version
-        run: |
-          set -euo pipefail
-          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "todo-curator") | .version')"
-          tag="v${version}"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "exists=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "exists=false" >> "${GITHUB_OUTPUT}"
-          fi
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-
       - name: Tag and create the draft release
-        if: steps.version.outputs.exists == 'false'
+        id: release-plz
         uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # Fails early and clearly if release-plz did not push the tag for its
-      # draft (a draft release alone creates no tag), or if a tag exists
-      # without a release (release-plz failed after tagging, or a hand-pushed
-      # tag): `build` and `publish` need both.
-      - name: Check the tag and release exist
+      # A draft release alone creates no tag, and build-release.yml builds
+      # from the tag: fail here, clearly, if release-plz did not push it.
+      - name: Check the tag exists
+        if: steps.release-plz.outputs.releases_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ fromJSON(steps.release-plz.outputs.releases)[0].tag }}
         run: |
           set -euo pipefail
           if ! gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::error::release-plz did not create ${TAG}."
-            exit 1
-          fi
-          if ! gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            echo "::error::${TAG} exists without a release; delete the tag and dispatch this workflow again."
+            echo "::error::release-plz did not push ${TAG}."
             exit 1
           fi
 
   build-release:
     needs: release
+    if: needs.release.outputs.tag != ''
     permissions:
       contents: write
     uses: ./.github/workflows/build-release.yml

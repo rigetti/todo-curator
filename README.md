@@ -138,9 +138,9 @@ Merging the release PR creates a GitHub release; nothing else does.
    It tags the merge commit, creates a draft release, builds the binaries,
    attaches them, and only then publishes the release.
    It runs for merged PRs labeled `release`, which release-plz adds.
-   If it fails midway, re-run it: it reuses the tag and the draft.
-   Dispatching it on `main` also works, but releases `main` as it is then.
-   If it reports a tag without a release, delete the tag and run it again.
+   If the build or publish fails, use "Re-run failed jobs" on that run.
+   If a release PR was merged without its `release` label, dispatch `Release`
+   on `main`: it releases the version in `Cargo.toml` if it has no tag yet.
 
 For a build of unmerged work, run `Prepare prerelease` on a branch.
 It pushes a tag only; nothing lands on the branch.
