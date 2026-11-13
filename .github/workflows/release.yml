@@ -1,13 +1,18 @@
 name: Release
 
-# Manual. Run on `main` after the release PR (prepare-release.yml) is merged.
-# Releases the version in Cargo.toml: `release-plz release` tags the commit and
-# creates a draft GitHub release (with a squash or rebase merge it tags whatever
-# `main` is now, not the release PR commit, so run this right after merging),
-# then build-release.yml builds, attaches, and publishes.
+# Runs when a release PR (prepare-release.yml; labeled `release`) is merged
+# into `main`. Releases the version in Cargo.toml: `release-plz release` tags
+# the PR's merge commit and creates a draft GitHub release, then
+# build-release.yml builds, attaches, and publishes.
 #
-# Safe to run again after a failure: an existing tag and draft are reused.
+# The merge is done by a person, so this run starts without the approval that
+# the release PR's own runs need.
+#
+# To recover from a failure, re-run it, or dispatch it on `main`: an existing
+# tag and draft are reused. A dispatch releases `main` as it is then.
 on:
+  pull_request:
+    types: [closed]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +24,12 @@ concurrency:
 
 jobs:
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged &&
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'release'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -27,13 +38,15 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Refuse other branches
-        if: github.ref != 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
         run: |
-          echo "::error::Dispatch this on main, after the release PR is merged."
+          echo "::error::Dispatch this on main."
           exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The merge commit on `main`, whatever the merge method.
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 

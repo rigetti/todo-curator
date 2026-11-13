@@ -112,9 +112,9 @@ If a repository's own tests or docs contain TODO-shaped text, set
 
 ## Releasing
 
-Releases are always started by hand, with [release-plz](https://release-plz.dev)
+Releases go through a release PR, with [release-plz](https://release-plz.dev)
 configured in `release-plz.toml`.
-Nothing releases automatically on a push.
+Merging the release PR releases; nothing else does.
 
 1. Run the `Prepare release` workflow on `main`.
    It opens or updates a release PR (version bump and changelog) from the
@@ -134,14 +134,12 @@ Nothing releases automatically on a push.
    either click "Update branch" on the PR, or dispatch `Prepare release` again
    and approve the new runs.
    Then review and merge.
-3. Run the `Release` workflow on `main` immediately after merging.
-   It tags, creates a draft release, builds the binaries, attaches them, and
-   only then publishes the release.
-   release-plz tags the release PR's commit only for a merge-commit merge.
-   For a squash or rebase merge it tags whatever `main` is at dispatch time, so
-   anything that landed after the merge is released too and is missing from
-   `CHANGELOG.md`, which is generated when the PR is opened or updated.
-   If it fails midway, run it again: it reuses the tag and the draft.
+3. Merging starts the `Release` workflow (any merge method).
+   It tags the merge commit, creates a draft release, builds the binaries,
+   attaches them, and only then publishes the release.
+   It runs for merged PRs labeled `release`, which release-plz adds.
+   If it fails midway, re-run it: it reuses the tag and the draft.
+   Dispatching it on `main` also works, but releases `main` as it is then.
    If it reports a tag without a release, delete the tag and run it again.
 
 For a build of unmerged work, run `Prepare prerelease` on a branch.

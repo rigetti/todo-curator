@@ -2,7 +2,6 @@ name: Prepare release
 
 # Manual. Run on `main` to open or update the release PR (version bump and
 # changelog, from Conventional Commits) with `release-plz release-pr`.
-# Releases are never started automatically.
 #
 # The release PR is opened and updated with GITHUB_TOKEN, so its
 # `pull_request` runs wait in `action_required` until a maintainer approves
@@ -13,7 +12,7 @@ name: Prepare release
 # dispatch this again and approve the new runs.
 #
 # Then check the required checks pass, review, and merge.
-# After merging, run release.yml on `main` immediately.
+# Merging starts release.yml.
 on:
   workflow_dispatch:
 

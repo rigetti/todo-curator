@@ -5,8 +5,9 @@ Decisions fixed by the user:
 - Replace knope entirely.
 - Only `GITHUB_TOKEN`: no PAT, no GitHub App.
 - No shared `qcs-gha-infrastructure` workflows on the release path: inlined.
-- Releases are always manual: every release workflow is `workflow_dispatch`
-  only; nothing triggers on a push.
+- Releases are deliberate: they go through a release PR, opened only by a
+  manual dispatch, and merging it releases.
+  Nothing releases on an ordinary push.
 - Prerelease keeps a local bump commit on top of the branch head, so
   `Cargo.toml` in the tagged tree matches the binary's version.
   Only the tag is pushed; nothing lands on the branch.
@@ -26,14 +27,19 @@ Decisions fixed by the user:
   The strict ruleset means a PR behind `main` needs fresh checks after any
   later push to `main`: "Update branch" (a user push) or a new dispatch plus
   approval.
-- `release.yml` (dispatch on `main`, after merging the release PR): releases
-  the version in `Cargo.toml`.
+- `release.yml` (`pull_request: closed`, plus `workflow_dispatch` on `main`
+  for recovery): releases the version in `Cargo.toml`.
+  - Runs for a merged PR into `main`, from this repository, labeled
+    `release` (release-plz's `pr_labels`).
+    Anyone with triage access can add the label to another PR; merging it
+    then releases the current `Cargo.toml` version, which normally already
+    has a tag, so nothing happens.
+  - Checks out `merge_commit_sha`, the PR's commit on `main` for any merge
+    method, so commits merged later are never part of the release.
+  - The merge is done by a person, so the run is not held for approval,
+    unlike the release PR's other `pull_request` runs.
   - No separate tag validation: `cargo metadata` rejects a `Cargo.toml`
     version that is not valid semver.
-  - Dispatch right after merging: release-plz tags the release PR commit only
-    for merge-commit merges. For squash or rebase merges it tags `main` at
-    dispatch time, so later commits are released too and are missing from
-    `CHANGELOG.md`.
   - Tag missing: `release-plz release` creates tag and draft.
     Tag present: reused, and release-plz is skipped.
     Tag present without a release: fails, asking to delete the tag and

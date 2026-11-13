@@ -12,10 +12,11 @@ git_only = true
 git_release_draft = true
 git_release_type = "auto"
 
-# Releases are always started by hand (release.yml, run on `main` after the
-# release PR is merged), so release whatever version in `Cargo.toml` has no tag
-# yet. `release_always = false` would instead require the latest commit on
-# `main` to be the release PR merge, and fail on any commit pushed after it.
+# release.yml decides when to release (a merged release PR, or a dispatch to
+# recover from a failure), so release whatever version in `Cargo.toml` has no
+# tag yet. `release_always = false` would instead require the checked-out
+# commit to be a release PR merge, which a recovery dispatch on a later `main`
+# is not.
 release_always = true
 
 pr_labels = ["release"]
