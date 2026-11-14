@@ -1,7 +1,7 @@
 use crate::todo::{TodoReference, TodoReferenceKind};
 use anyhow::{Context, Result};
 use gitlab::api::projects::{issues, merge_requests};
-use gitlab::api::AsyncQuery;
+use gitlab::api::{AsyncClient, AsyncQuery, RestClient};
 use gitlab::AsyncGitlab;
 use octocrab::Octocrab;
 use secrecy::{ExposeSecret, SecretString};
@@ -17,6 +17,7 @@ pub enum ProjectDetection {
 
 impl ProjectDetection {
     /// Return true when this detection is GitLab and the project path matches exactly.
+    #[must_use]
     pub fn matches_gitlab(&self, project_path: &str) -> bool {
         match self {
             Self::GitLab(project) => project == project_path,
@@ -25,6 +26,7 @@ impl ProjectDetection {
     }
 
     /// Return true when this detection is GitLab and its parent group matches the expected group.
+    #[must_use]
     pub fn parent_group_matches(&self, group_path: &str) -> bool {
         match self {
             Self::GitLab(project) => project
@@ -199,7 +201,7 @@ impl StatusChecker {
     }
 
     /// Detect project from git remote origin URL
-    /// Returns ProjectDetection enum indicating GitHub, GitLab, or no project
+    /// Returns `ProjectDetection` enum indicating GitHub, GitLab, or no project
     pub fn detect_project(path: &std::path::Path) -> ProjectDetection {
         // Check for CI_PROJECT_PATH first (GitLab CI)
         if let Some(ci_project_path) = Self::env_var("CI_PROJECT_PATH") {
@@ -230,20 +232,16 @@ impl StatusChecker {
 
         // Check host to determine GitHub vs GitLab
         match url.host() {
-            Some("github.com") => {
-                if let Some(path) = url.path_argument_safe() {
+            Some("github.com") => url
+                .path_argument_safe()
+                .map_or(ProjectDetection::None, |path| {
                     ProjectDetection::GitHub(Self::normalize_project_path(&path.to_string()))
-                } else {
-                    ProjectDetection::None
-                }
-            }
-            Some("gitlab.com") => {
-                if let Some(path) = url.path_argument_safe() {
+                }),
+            Some("gitlab.com") => url
+                .path_argument_safe()
+                .map_or(ProjectDetection::None, |path| {
                     ProjectDetection::GitLab(Self::normalize_project_path(&path.to_string()))
-                } else {
-                    ProjectDetection::None
-                }
-            }
+                }),
             _ => ProjectDetection::None,
         }
     }
@@ -363,8 +361,8 @@ impl StatusChecker {
 
             if slash_idx.is_none_or(|idx| colon_idx < idx) {
                 if let Some(idx) = slash_idx {
-                    let after_colon = &cleaned[colon_idx + 1..idx];
-                    if after_colon.chars().all(|c| c.is_ascii_digit()) {
+                    let from_colon = &cleaned[colon_idx..idx];
+                    if from_colon.chars().skip(1).all(|c| c.is_ascii_digit()) {
                         // host:port/path
                         cleaned = &cleaned[..idx];
                     } else {
@@ -427,7 +425,7 @@ impl StatusChecker {
             {
                 Ok(Some(closed_ref)) => {
                     tracing::info!("Reference closed: {:?}", closed_ref.reference);
-                    closed.push(closed_ref)
+                    closed.push(closed_ref);
                 }
                 Ok(None) => {
                     tracing::info!("Reference exists but is not closed: {:?}", reference);
@@ -505,7 +503,7 @@ impl StatusChecker {
 
         let endpoint = issues::Issue::builder()
             .project(project_path)
-            .issue(number as u64)
+            .issue(u64::from(number))
             .build()
             .context("Failed to build GitLab issue query")?;
 
@@ -549,14 +547,14 @@ impl StatusChecker {
 
         let parts: Vec<&str> = repo_path.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo_path);
+            anyhow::bail!("Invalid GitHub repo format: {repo_path}");
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
-        let issue = match client.issues(owner, repo_name).get(number as u64).await {
+        let issue = match client.issues(owner, repo_name).get(u64::from(number)).await {
             Ok(issue) => issue,
             Err(e) => {
-                anyhow::bail!("GitHub issue not found or inaccessible: {}", e);
+                anyhow::bail!("GitHub issue not found or inaccessible: {e}");
             }
         };
 
@@ -591,7 +589,7 @@ impl StatusChecker {
 
         let endpoint = merge_requests::MergeRequest::builder()
             .project(project_path)
-            .merge_request(number as u64)
+            .merge_request(u64::from(number))
             .build()
             .context("Failed to build GitLab MR query")?;
 
@@ -622,13 +620,12 @@ impl StatusChecker {
 
         let parts: Vec<&str> = repo.split('/').collect();
         if parts.len() != 2 {
-            anyhow::bail!("Invalid GitHub repo format: {}", repo);
+            anyhow::bail!("Invalid GitHub repo format: {repo}");
         }
         let (owner, repo_name) = (parts[0], parts[1]);
 
-        let pr = match client.pulls(owner, repo_name).get(number as u64).await {
-            Ok(pr) => pr,
-            Err(_) => return Ok(None),
+        let Ok(pr) = client.pulls(owner, repo_name).get(u64::from(number)).await else {
+            return Ok(None);
         };
 
         if pr.state != Some(octocrab::models::IssueState::Open) {
@@ -662,15 +659,12 @@ impl StatusChecker {
                         // Extract group from project path (e.g., "rigetti/qcs/services/myproject" -> "rigetti/qcs/services")
                         // Epics belong to groups, not projects, so we need to find the parent group
                         // For now, we'll try the full path minus the last component
-                        let parts: Vec<&str> = project_path.split('/').collect();
-                        if parts.len() > 1 {
-                            parts[..parts.len() - 1].join("/")
-                        } else {
+                        let Some((parent, _)) = project_path.rsplit_once('/') else {
                             anyhow::bail!(
-                                "Cannot determine group from project path: {}",
-                                project_path
+                                "Cannot determine group from project path: {project_path}"
                             )
-                        }
+                        };
+                        parent.to_string()
                     }
                     _ => anyhow::bail!("GitLab epic requires group path"),
                 }
@@ -686,7 +680,6 @@ impl StatusChecker {
         );
 
         // Build HTTP request manually
-        use gitlab::api::{AsyncClient, RestClient};
         let url = client
             .rest_endpoint(&endpoint)
             .context("Failed to build epic endpoint URL")?;
@@ -707,7 +700,7 @@ impl StatusChecker {
 
         // Check if the response contains an error message (404, 403, etc.)
         if let Some(message) = epic.get("message").and_then(|v| v.as_str()) {
-            anyhow::bail!("GitLab API error: {}", message);
+            anyhow::bail!("GitLab API error: {message}");
         }
 
         // Parse the epic state
@@ -747,7 +740,6 @@ impl StatusChecker {
             return Ok(None);
         };
 
-        use gitlab::api::{AsyncClient, RestClient};
         let url = client
             .instance_endpoint("api/graphql")
             .context("Failed to build GraphQL endpoint URL")?;
@@ -825,17 +817,15 @@ impl StatusChecker {
         Ok((state.to_string(), title.to_string()))
     }
 
-    pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
-        let Some(client) = self.gitlab_client.as_ref() else {
-            return Ok(Vec::new());
-        };
-
-        // Get current branch name to find the MR
+    /// Name of the branch that `HEAD` refers to.
+    ///
+    /// Synchronous so that the non-`Send` `gix::Repository` is never held across an `.await`.
+    fn current_branch_name() -> Option<String> {
         let repo = match gix::discover(".") {
             Ok(repo) => repo,
             Err(e) => {
                 tracing::warn!(error=%e, "not in a valid git repository");
-                return Ok(Vec::new());
+                return None;
             }
         };
 
@@ -843,7 +833,7 @@ impl StatusChecker {
             Ok(head) => head,
             Err(e) => {
                 tracing::warn!(error=%e, "failed to get HEAD reference");
-                return Ok(Vec::new());
+                return None;
             }
         };
 
@@ -859,13 +849,25 @@ impl StatusChecker {
                 }
                 Ok(None) => {
                     tracing::warn!("HEAD is detached and no non-jj/keep branch points at HEAD");
-                    return Ok(Vec::new());
+                    return None;
                 }
                 Err(e) => {
                     tracing::warn!(error=%e, "failed to resolve branch name for detached HEAD");
-                    return Ok(Vec::new());
+                    return None;
                 }
             },
+        };
+
+        Some(branch)
+    }
+
+    pub async fn get_current_mr_issues(&self, project: &str) -> Result<Vec<u32>> {
+        let Some(client) = self.gitlab_client.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let Some(branch) = Self::current_branch_name() else {
+            return Ok(Vec::new());
         };
 
         // Find MR for this branch
@@ -941,7 +943,7 @@ mod tests {
     use serde_json::json;
 
     /// Run `f` with exactly the given environment variables set.
-    #[allow(clippy::result_large_err)] // `figment::Error` is dictated by `Jail`'s API.
+    #[expect(clippy::result_large_err)] // `figment::Error` is dictated by `Jail`'s API.
     fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
         let mut out = None;
         figment::Jail::expect_with(|jail| {
