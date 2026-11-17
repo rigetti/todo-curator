@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use gitlab::api::projects::{issues, merge_requests};
 use gitlab::api::{AsyncClient, AsyncQuery, RestClient};
 use gitlab::AsyncGitlab;
+use gix::bstr::ByteSlice;
 use octocrab::Octocrab;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -231,18 +232,20 @@ impl StatusChecker {
         };
 
         // Check host to determine GitHub vs GitLab
-        match url.host() {
-            Some("github.com") => url
-                .path_argument_safe()
-                .map_or(ProjectDetection::None, |path| {
-                    ProjectDetection::GitHub(Self::normalize_project_path(&path.to_string()))
-                }),
-            Some("gitlab.com") => url
-                .path_argument_safe()
-                .map_or(ProjectDetection::None, |path| {
-                    ProjectDetection::GitLab(Self::normalize_project_path(&path.to_string()))
-                }),
-            _ => ProjectDetection::None,
+        match (
+            url.host(),
+            url.path_argument_safe().map(|bstr| bstr.to_str()),
+        ) {
+            (Some("github.com"), Some(Ok(path))) => {
+                ProjectDetection::GitHub(Self::normalize_project_path(path))
+            }
+            (Some("gitlab.com"), Some(Ok(path))) => {
+                ProjectDetection::GitLab(Self::normalize_project_path(path))
+            }
+            (host, path) => {
+                tracing::warn!(?host, ?path, "unrecognized or invalid git remote URL");
+                ProjectDetection::None
+            }
         }
     }
 
