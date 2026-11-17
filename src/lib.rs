@@ -30,7 +30,8 @@ pub struct ReferenceWarning {
 }
 
 impl CheckOutput {
-    /// Create a CheckOutput from a CheckResult and lint violations
+    /// Create a `CheckOutput` from a `CheckResult` and lint violations
+    #[must_use]
     pub fn from_result(result: checker::CheckResult, lint_violations: LintViolations) -> Self {
         let status = if result.closed.is_empty()
             && result.not_found.is_empty()
@@ -51,6 +52,7 @@ impl CheckOutput {
     }
 
     /// Create an empty success output
+    #[must_use]
     pub fn empty_success() -> Self {
         Self {
             closed: Vec::new(),
@@ -62,7 +64,8 @@ impl CheckOutput {
     }
 
     /// Check if there are any errors (closed or not found issues)
-    pub fn has_errors(&self) -> bool {
+    #[must_use]
+    pub const fn has_errors(&self) -> bool {
         !self.closed.is_empty() || !self.not_found.is_empty() || !self.lint_violations.is_empty()
     }
 }
@@ -89,7 +92,7 @@ pub async fn check_closed_from_extraction(
         checker::ProjectDetection::None => {
             tracing::debug!("No project detected");
         }
-    };
+    }
 
     let references = &extraction.references;
 
