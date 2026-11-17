@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21](https://github.com/rigetti/todo-curator/compare/v0.1.20...v0.1.21) - 2026-11-17
+
+### Fixed
+
+- prohibit 'TEMPORARY' (not just 'TEMP') ([#59](https://github.com/rigetti/todo-curator/pull/59))
+
+### Other
+
+- turn on all the lints we meant to turn on ([#63](https://github.com/rigetti/todo-curator/pull/63))
+
 ## [0.1.20](https://github.com/rigetti/todo-curator/compare/v0.1.19...v0.1.20) - 2026-11-13
 
 ### Other
