@@ -21,7 +21,7 @@ permissions:
 jobs:
   build:
     # TODO(github.com/rigetti/qcs-gha-infrastructure#21): use a version-tag once a new one has been created
-    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@1920fe53541626e77f52a12fb2622d7a68b46fdc
+    uses: rigetti/qcs-gha-infrastructure/.github/workflows/rust-cli-build.yml@75e340597aee87f25f0722050a906e6f34c13cf3
     with:
       bin: todo-curator
       ref: refs/tags/${{ inputs.tag }}
