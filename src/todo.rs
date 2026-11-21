@@ -667,6 +667,12 @@ impl TodoExtractor {
         })
     }
 
+    /// Parses a single reference token (such as a URL) outside of any source file.
+    #[must_use]
+    pub fn extract_reference_from_token(&self, token: &str) -> Option<TodoReference> {
+        self.extract_token_reference(token, "", "", 0)
+    }
+
     fn extract_token_reference(
         &self,
         token: &str,

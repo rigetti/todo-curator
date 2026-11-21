@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
-use todo_curator::todo::TodoReference;
+use todo_curator::todo::{TodoExtractor, TodoReference};
 use todo_curator::{
     check_closed_from_extraction, check_closed_references, check_invalid,
     check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
@@ -90,6 +90,26 @@ enum Commands {
         args: Args,
     },
 
+    #[command(
+        about = "Print the simplified form of each URL, as suggested by check-invalid",
+        long_about = "Print the simplified form of each URL, as suggested by check-invalid.\n\n\
+            URLs with no simplification are printed unchanged.\n\
+            If any URL is not a recognized reference, nothing is printed and the exit code is 1."
+    )]
+    SimplifyUrl {
+        #[arg(
+            short,
+            long,
+            default_value = ".",
+            env = "TODO_CURATOR_PATH",
+            help = "Path used to detect the current project"
+        )]
+        path: PathBuf,
+
+        #[arg(required = true, value_name = "URLS")]
+        urls: Vec<String>,
+    },
+
     #[command(about = "Validate that both GitHub and GitLab clients initialize")]
     ValidateAuth,
 }
@@ -105,8 +125,12 @@ enum CheckKind {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Commands::SimplifyUrl { .. })) {
+        tracing_subscriber::fmt().with_writer(io::stderr).init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     if cli.usage_spec {
         clap_usage::generate(&mut Cli::command(), "todo-curator", &mut io::stdout());
@@ -120,6 +144,10 @@ async fn main() -> Result<()> {
         Commands::ValidateAuth => {
             StatusChecker::validate_auth().await?;
             println!("Authentication validated for GitHub and GitLab.");
+            return Ok(());
+        }
+        Commands::SimplifyUrl { path, urls } => {
+            run_simplify_url(&path, &urls);
             return Ok(());
         }
         Commands::CheckClosed { args } => (CheckKind::Closed, args),
@@ -146,6 +174,35 @@ async fn main() -> Result<()> {
         CheckKind::Invalid => run_check_invalid(args, &project_detection),
         CheckKind::All => run_check_all(args, &project_detection).await,
         CheckKind::MrTodos => run_check_mr_todos(args, &project_detection).await,
+    }
+}
+
+fn run_simplify_url(path: &std::path::Path, urls: &[String]) {
+    let project_detection = StatusChecker::detect_project(path);
+    let extractor = TodoExtractor::new();
+
+    let mut simplified = Vec::with_capacity(urls.len());
+    let mut unrecognized = Vec::new();
+    for url in urls {
+        match extractor.extract_reference_from_token(url) {
+            Some(reference) => simplified.push(
+                reference
+                    .suggest_simplified_format(&project_detection)
+                    .map_or_else(|| url.clone(), |warning| warning.suggestion),
+            ),
+            None => unrecognized.push(url),
+        }
+    }
+
+    if !unrecognized.is_empty() {
+        for url in unrecognized {
+            eprintln!("error: not a recognized reference: {url:?}");
+        }
+        process::exit(1);
+    }
+
+    for line in simplified {
+        println!("{line}");
     }
 }
 
