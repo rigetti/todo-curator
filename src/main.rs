@@ -195,15 +195,16 @@ fn run_simplify_url(path: &std::path::Path, urls: &[String]) {
     }
 
     if !unrecognized.is_empty() {
-        for url in unrecognized {
+        for url in &unrecognized {
             eprintln!("error: not a recognized reference: {url:?}");
         }
-        process::exit(1);
     }
 
     for line in simplified {
         println!("{line}");
     }
+
+    process::exit(unrecognized.len().try_into().unwrap_or(1));
 }
 
 async fn authenticated_checker() -> Result<StatusChecker> {
