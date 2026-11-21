@@ -181,18 +181,7 @@ fn run_simplify_url(path: &std::path::Path, urls: &[String]) {
     let project_detection = StatusChecker::detect_project(path);
     let extractor = TodoExtractor::new();
 
-    let mut simplified = Vec::with_capacity(urls.len());
-    let mut unrecognized = Vec::new();
-    for url in urls {
-        match extractor.extract_reference_from_token(url) {
-            Some(reference) => simplified.push(
-                reference
-                    .suggest_simplified_format(&project_detection)
-                    .map_or_else(|| url.clone(), |warning| warning.suggestion),
-            ),
-            None => unrecognized.push(url),
-        }
-    }
+    let (simplified, unrecognized) = extractor.simplify_urls(urls, &project_detection);
 
     if !unrecognized.is_empty() {
         for url in &unrecognized {
