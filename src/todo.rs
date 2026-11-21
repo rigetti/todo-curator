@@ -667,6 +667,30 @@ impl TodoExtractor {
         })
     }
 
+    /// Simplifies each reference token (such as a URL) outside of any source file.
+    ///
+    /// Returns the simplified references and the tokens that were not recognized.
+    #[must_use]
+    pub fn simplify_urls<'a>(
+        &self,
+        urls: &'a [String],
+        project_detection: &ProjectDetection,
+    ) -> (Vec<String>, Vec<&'a String>) {
+        let mut simplified = Vec::with_capacity(urls.len());
+        let mut unrecognized = Vec::new();
+        for url in urls {
+            match self.extract_token_reference(url, "", "", 0) {
+                Some(reference) => simplified.push(
+                    reference
+                        .suggest_simplified_format(project_detection)
+                        .map_or_else(|| url.clone(), |warning| warning.suggestion),
+                ),
+                None => unrecognized.push(url),
+            }
+        }
+        (simplified, unrecognized)
+    }
+
     fn extract_token_reference(
         &self,
         token: &str,

@@ -1452,3 +1452,103 @@ fn test_work_item_url_suggestion() {
         .suggest_simplified_format(&ProjectDetection::None)
         .is_none());
 }
+
+fn run_simplify_url(urls: &[&str], project_path: Option<&str>) -> std::process::Output {
+    let dir =
+        std::env::temp_dir().join(format!("todo_curator_simplify_url_{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("Failed to create temp dir");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_todo-curator"));
+    cmd.arg("simplify-url").arg("-p").arg(&dir).args(urls);
+    cmd.env_remove("CI_PROJECT_PATH");
+    if let Some(project_path) = project_path {
+        cmd.env("CI_PROJECT_PATH", project_path);
+    }
+    let output = cmd.output().expect("Failed to run todo-curator");
+    let _ = fs::remove_dir_all(&dir);
+    output
+}
+
+fn stdout_of(output: &std::process::Output) -> String {
+    assert!(
+        output.status.success(),
+        "STDERR:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test_log::test]
+fn test_simplify_url_prints_one_line_per_url_in_order() {
+    let output = run_simplify_url(
+        &[
+            "https://github.com/foo/bar/issues/123",
+            "https://gitlab.com/foo/bar/-/merge_requests/5",
+        ],
+        None,
+    );
+    assert_eq!(stdout_of(&output), "github.com/foo/bar#123\nfoo/bar!5\n");
+}
+
+#[test_log::test]
+fn test_simplify_url_without_simplification_prints_input_unchanged() {
+    let output = run_simplify_url(&["https://github.com/foo/bar/pull/7"], None);
+    assert_eq!(stdout_of(&output), "https://github.com/foo/bar/pull/7\n");
+}
+
+#[test_log::test]
+fn test_simplify_url_accepts_scheme_less_url() {
+    let output = run_simplify_url(&["gitlab.com/foo/bar/-/merge_requests/5"], None);
+    assert_eq!(stdout_of(&output), "foo/bar!5\n");
+}
+
+#[test_log::test]
+fn test_simplify_url_uses_detected_project() {
+    let output = run_simplify_url(
+        &[
+            "https://gitlab.com/foo/bar/-/issues/9",
+            "https://gitlab.com/foo/bar/-/merge_requests/5",
+            "https://gitlab.com/groups/foo/-/epics/3",
+            "https://gitlab.com/other/proj/-/issues/9",
+        ],
+        Some("foo/bar"),
+    );
+    assert_eq!(stdout_of(&output), "#9\n!5\n&3\nother/proj#9\n");
+}
+
+#[test_log::test]
+fn test_simplify_url_without_detected_project_keeps_project_path() {
+    let output = run_simplify_url(&["https://gitlab.com/foo/bar/-/issues/9"], None);
+    assert_eq!(stdout_of(&output), "foo/bar#9\n");
+}
+
+#[test_log::test]
+fn test_simplify_url_rejects_unrecognized_urls_atomically() {
+    let output = run_simplify_url(
+        &[
+            "https://gitlab.com/foo/bar/-/issues/9",
+            "https://example.com/not/a/reference",
+            "https://github.com/foo/bar/pull/7/files",
+        ],
+        None,
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "STDERR:\n{stderr}");
+    assert_eq!(output.stdout, b"", "no partial stdout on failure");
+    assert!(stderr.contains("https://example.com/not/a/reference"));
+    assert!(stderr.contains("https://github.com/foo/bar/pull/7/files"));
+    assert!(!stderr.contains("unrecognized subcommand"));
+}
+
+#[test_log::test]
+fn test_simplify_url_rejects_empty_argument() {
+    let output = run_simplify_url(&[""], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stdout, b"");
+}
+
+#[test_log::test]
+fn test_simplify_url_requires_at_least_one_url() {
+    let output = run_simplify_url(&[], None);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("<URLS>"));
+}
