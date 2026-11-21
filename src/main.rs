@@ -13,6 +13,7 @@ use todo_curator::{
     check_invalid_from_extraction, checker::ProjectDetection, checker::StatusChecker,
     extract_todos, CheckOutput,
 };
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
@@ -126,11 +127,10 @@ enum CheckKind {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    if matches!(cli.command, Some(Commands::SimplifyUrl { .. })) {
-        tracing_subscriber::fmt().with_writer(io::stderr).init();
-    } else {
-        tracing_subscriber::fmt::init();
-    }
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     if cli.usage_spec {
         clap_usage::generate(&mut Cli::command(), "todo-curator", &mut io::stdout());
